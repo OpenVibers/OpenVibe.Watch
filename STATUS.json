@@ -1,0 +1,52 @@
+{
+  "repository": "OpenVibers/OpenVibe.Watch",
+  "stage": "alpha",
+  "code": true,
+  "wave": "W18",
+  "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026) — T18 Watch complete, steps 2-3",
+  "runtime": "node 22, express, PostgreSQL 18 (openvibe-sdk/db, async) + Valkey 9, fast-xml-parser",
+  "port": 4730,
+  "domain": "openvibe.watch (vhost in deploy/nginx: an internal-service page, health and JSON 404s; the API is loopback-only; README \"Public host\")",
+  "contracts": "openvibe-contracts v0.107.0",
+  "capabilities": [
+    "watch.watch.read",
+    "watch.watch.manage",
+    "watch.observation.read",
+    "watch.check.run"
+  ],
+  "capabilitiesRegistered": true,
+  "contractsUsed": [
+    "watch.watch@1, watch.watch-request@1, watch.watch-result@1",
+    "watch.observation@1, watch.check-run@1",
+    "watch.observation.recorded@1, watch.watch.triggered@1, watch.check.failed@1"
+  ],
+  "carriers": [
+    "http",
+    "feed",
+    "api"
+  ],
+  "carriersPending": [
+    "event (step 5)",
+    "webhook (step 5)",
+    "run (step 6)",
+    "node (step 7)"
+  ],
+  "seededWatches": 0,
+  "deployed": false,
+  "deployment": "Not deployed. Plan T18 steps 2-3 are implemented and tested in the repository (registry, check engine, http/feed/api carriers, conditional GET, extraction, conditions, observations, check runs, the API, the events); nothing runs on the host yet, and openvibe.watch has no DNS or vhost installed.",
+  "features": [
+    "watch registry with owner scoping (404 for another owner) validated against the released contracts",
+    "binding carrier preference order: webhook/event → ETag/Last-Modified → feed → API → Run",
+    "conditional GET: If-None-Match/If-Modified-Since, HEAD-first when only change is needed, 304 and unchanged-body short circuits",
+    "SSRF-guarded fetcher (ports, private hosts, every redirect hop, byte cap, one deadline) and per-host spacing",
+    "feed (RSS/Atom) and mapped-API carriers",
+    "extraction: text, html, css subset, json/jsonpath, regex; ai refused as a later step",
+    "conditions: changed/threshold with tolerance and percent, for_sec debounce over the observation trail",
+    "observations with value hashes, capped snapshots and retention",
+    "check runs with the full terminal-state set, exponential backoff and Retry-After",
+    "POST /api/v1/watches/:id/check plus the observations and checks reads",
+    "watch.* events through the outbox in the same transaction as the state change",
+    "per-actor limits (openvibe-sdk/limits)"
+  ],
+  "updated": "2026-10-07"
+}

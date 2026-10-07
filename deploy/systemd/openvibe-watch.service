@@ -1,0 +1,32 @@
+[Unit]
+Description=OpenVibe.Watch — persistent user-defined observations and conditions (pages, feeds, APIs)
+# Network (openvibe-network) signs the tokens this service verifies, and Events carries watch.*
+# events. Watch starts without either: the SDK's JWKS client keeps the last good keys and backs
+# off (/api/ready degrades while no key has loaded), and the outbox waits for the relay.
+After=network.target postgresql.service pgbouncer.service valkey-server.service
+Wants=openvibe-network.service postgresql.service pgbouncer.service valkey-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/openvibe.watch
+EnvironmentFile=/etc/openvibe/watch.env
+Environment=NODE_ENV=production
+Environment=PORT=4730
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node /opt/openvibe.watch/server/index.js
+Restart=always
+RestartSec=5
+# SIGTERM: the scheduler stops starting checks; checks in flight finish (each is bounded by the
+# fetch timeout, and the graceful drain gives them 15 s).
+KillSignal=SIGTERM
+TimeoutStopSec=25
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The code tree stays read-only; watches, checks and observations live in PostgreSQL (ADR-035).
+
+[Install]
+WantedBy=multi-user.target
