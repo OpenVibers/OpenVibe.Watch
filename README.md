@@ -308,3 +308,9 @@ loopback-only (`deploy/nginx/openvibe.watch.conf`). Install: copy the unit and t
 `/etc/openvibe/watch.env` (0600) from `.env.example`, run
 `sudo /opt/openvibe.host/roles/data/add-service.sh watch`, then
 `sudo ovhost deploy watch`.
+
+<!-- versions:start -->
+- openvibe-contracts: v0.112.0
+- openvibe-sdk: v0.34.0
+- openvibe-shared: v2.11.0
+<!-- versions:end -->
