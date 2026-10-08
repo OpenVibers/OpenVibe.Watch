@@ -4,10 +4,11 @@
 > watch, get told when it changes or fires — cheaply, because a Watch never polls when an event or
 > the site's own ETag will do.
 
-**Status:** alpha (plan T18 steps 2–3). The registry, the check engine and the pull carriers exist;
-the event, webhook, Node and Run rungs and the actions do not yet.  
-**Domain:** `openvibe.watch` (a short "internal service" page and health on this repository's vhost;
-the API is loopback-only). Install steps: [Public host](#public-host).  
+**Status:** alpha (plan T18 steps 2–3 and step 8). The registry, the check engine, the pull carriers
+and the public site (sign-in, pages, forms) exist; the event, webhook, Node and Run rungs and the
+actions do not yet.  
+**Domain:** `openvibe.watch` (a public, server-rendered site at [Public site](#public-site); the API
+is loopback-only). Install steps: [Public host](#public-host).  
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 — T18 (Watch complete),
 the carrier preference order, "a Watch has source, cadence or event source, extraction, comparison,
 condition, action, budget, retention".  
@@ -47,6 +48,57 @@ answers direct loopback callers only: golden signals by route template, `watch_w
 `watch_observations{state}`, the check queue (`watch_checks_due`,
 `watch_checks_oldest_wait_seconds`, `watch_checks_in_flight`),
 `watch_last_check_timestamp_seconds`, `watch_last_success_timestamp_seconds`.
+
+## Public site
+
+`openvibe.watch` is also the place a person manages their own watches in a browser. Every page is
+server-rendered and complete without JavaScript: the create and edit forms POST, pause/resume/
+delete/check-now are plain forms, and the fields a form shows are chosen by the query
+(`/watches/new?template=price`), not by script. The visual layer is plain semantic HTML on the
+classes openvibe-shared's frame and this repository's `public/css/app.css` already provide.
+
+**Sign-in** is OpenVibe.Network's OAuth 2 authorization code with PKCE (S256), as the OAuth client
+`watch` (`OV_OAUTH_CLIENT_ID`/`OV_OAUTH_CLIENT_SECRET`), redirecting to `BASE_URL/auth/callback`.
+The Network token is verified once (issuer, audience `openvibe.network`, a `usr_…`/`agt_…` subject)
+and then discarded; the browser holds an opaque random session token in an httpOnly, SameSite=Lax
+cookie, and Watch's database stores only its SHA-256 hash (`web_sessions`, migration 0002). The
+signed-in person's `usr_…` subject is the watch owner: the site calls the **registry directly,
+in-process**, with exactly the ownership rules the API applies — another person's watch is 404 on
+every page and every form, never 403. A signed-in write must also come from this site itself
+(same-origin), so another site cannot make a visitor act here.
+
+| Page | What it shows |
+|---|---|
+| `/` | what Watch is in one paragraph; four starting points as cards; how it checks in plain words; your watches summary (counts by status) when signed in |
+| `/watches` | your watches: name, source host, condition in words, status, last check state and time, last value, next due — paged with `before` |
+| `/watches/new?template=page\|price\|feed\|json` | the one create form, showing only the fields the chosen kind needs |
+| `/watches/:id` | the watch in words, status with pause/resume/delete/check-now, the observation history (time, value, changed, condition met) and the check runs with their states in plain words, both paged |
+| `/watches/:id/edit` | the same form, PATCH semantics |
+| `/how-it-works`, `/updates` | the carrier order, the manners and every state, in plain words; Watch's own changelog |
+| `/robots.txt`, `/sitemap.xml`, `/llms.txt(/-full)` | discovery: the home page and how-it-works are listed; `/watches` and `/auth` are disallowed |
+
+**Four starting points**, each a page of the same form:
+
+| Template | Source | Extraction | Condition |
+|---|---|---|---|
+| `page` | http | html, an optional CSS selector | `changed` |
+| `price` | http | css selector or regex | `lt`/`lte`/`gt`/`gte` |
+| `feed` | feed | the newest item (`latest`) | `changed` |
+| `json` | api | json with an optional `value_path` | any of the ops |
+
+The cadence is a select (15 minutes, 1 hour, 6 hours, 1 day); 15 minutes is the shortest a person may
+choose here (the contract's floor is 30 seconds, for a service). A validation error re-renders the
+form with the person's own input and the registry's own message next to the field it names. The
+kinds whose carrier does not exist yet (event, webhook, run, node) and the `ai` extraction are **not
+offered** — and a watch of such a kind created through the API still answers `watch.carrier_unavailable`
+when checked from the site, fetching nothing.
+
+Check-now from the page respects the API's limits and its refusals: a second check while one runs or
+a check of a paused watch is the API's 409, said in words; a kind without a carrier is the API's 422;
+and the manual-check and write budgets (10/120 and 30/600 per person, a minute/hour) are enforced
+with a friendly page. "Notify me" stores the notification action; a fired condition still emits
+`watch.watch.triggered` through OpenVibe.Network as today (actions are step 4 and are not dispatched
+yet, which the form says on the page).
 
 ## The watch model
 
@@ -218,7 +270,12 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
   limits. `X-OV-Subject` is honoured only from a first-party service. The vhost keeps `/api/v1/*`
   loopback-only.
 - **Ownership.** Reads and writes are scoped to the acting subject; another owner's watch answers
-  404 on every route.
+  404 on every route — and on every page and form of the public site, which acts on the same
+  registry in-process.
+- **Site sessions.** The browser holds an opaque random token in an httpOnly, SameSite=Lax cookie;
+  the database keeps only its SHA-256 hash, and the Network access token is verified once and
+  discarded. A signed-in write must be same-origin, and the page forms escape every value they show
+  (the `html` tagged template, `server/render/html.js`).
 - **Egress.** A watch fetches outside URLs by design, only through the guard:
   [server/net/guard.js](server/net/guard.js), http(s) on `WATCH_ALLOWED_PORTS` (80/443), every
   resolved address public at connect time (no DNS rebinding), each redirect hop re-checked, one
@@ -235,6 +292,7 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
 - the watch registry (`watches`, `watch_endpoint_state`) and the `watch.watch@1` /
   `watch.watch-request@1` / `watch.watch-result@1` shapes it serves
 - checks: `check_runs`, `observations`, the scheduler, conditional-fetch state, backoff
+- the public site's sign-in sessions (`web_sessions`) and its pages
 - `watch.*` events
 
 ## Does not own
@@ -295,6 +353,11 @@ Called elsewhere, as the service principal `watch` (client credentials from Open
   X-OV-Subject delegation, the check and observation reads, per-actor 429 (`test/api.test.js`)
 - the registry: required fields, cadence rules, forbidden headers, due selection, re-arm, soft
   delete, the keyset page (`test/registry.test.js`)
+- the public site (`test/site.test.js`): sign-in through the stand-in Network (PKCE, a session,
+  state mismatch refused, `/auth/me`, sign-out), the signed-out pages, each create template against
+  what the API would store, validation errors that keep the input, another person's watch 404 on
+  every page and form, pause/resume/delete/check-now against a stub site (with the API's 409s and
+  422), cross-site writes refused, and hostile names and values escaped on every page
 
 Not yet demonstrated: a check against a real site from a deployed service (nothing is deployed
 yet), the event/webhook carriers (step 5), the Run rung (step 6), Node probes (step 7) and the
@@ -302,9 +365,11 @@ actions (step 4) — each answers `watch.carrier_unavailable` and fetches nothin
 
 ## Public host
 
-`openvibe.watch` is an internal service, like `sources.openvibe.network`: its vhost answers only
-`/`, `/api/health`, `/api/ready`, `/release.json` and `/robots.txt`, and keeps `/api/v1/*`
-loopback-only (`deploy/nginx/openvibe.watch.conf`). Install: copy the unit and the vhost, write
+`openvibe.watch` serves the site at the edge: the pages, `/auth/*`, `/css/*` and `/shared/*`, the
+discovery files, and `/api/health`, `/api/ready`, `/release.json`. It keeps `/api/v1/*`
+loopback-only, exactly as before, so the service API is reached only from the host. Sign-in and form
+POSTs have their own per-address limit zones (nginx refuses `limit_req` inside `limit_except`, so a
+`map` on `$request_method` gives GET/HEAD an empty key). Install: copy the unit and the vhost, write
 `/etc/openvibe/watch.env` (0600) from `.env.example`, run
 `sudo /opt/openvibe.host/roles/data/add-service.sh watch`, then
 `sudo ovhost deploy watch`.
