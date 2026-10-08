@@ -9,7 +9,7 @@
   "domain": "openvibe.watch (vhost in deploy/nginx: an internal-service page, health and JSON 404s; the API is loopback-only; README \"Public host\")",
   "contracts": "openvibe-contracts v0.112.0",
   "sdk": "openvibe-sdk v0.35.0",
-  "shared": "openvibe-shared v2.11.0",
+  "shared": "openvibe-shared v2.13.2",
   "capabilities": [
     "watch.watch.read",
     "watch.watch.manage",
@@ -50,5 +50,5 @@
     "watch.* events through the outbox in the same transaction as the state change",
     "per-actor limits (openvibe-sdk/limits)"
   ],
-  "updated": "2026-10-07"
+  "updated": "2026-10-08"
 }
