@@ -25,6 +25,9 @@ const { createOutbox, createRelay } = require('./events/outbox');
 const { jwksClient } = require('openvibe-sdk/auth');
 const { gracefulStop } = require('openvibe-sdk/service');
 const { createAuth } = require('./auth');
+const { createSessions } = require('./sessions');
+const { createKeyStore } = require('./auth/keys');
+const { createSiteLimits } = require('./http/site-limits');
 const { createApp } = require('./app');
 
 async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokenClient, lookupImpl, log = console, listen = true, limitsNow = null } = {}) {
@@ -50,7 +53,12 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const scheduler = createScheduler({ db, check, config, now, log });
     const keys = jwksClient(config.jwksUrl, { fetch: fetchImpl, log });
     const auth = createAuth({ config, log });
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log, limitsNow });
+    // The public site: sessions in Watch's own database, the Network key to verify a sign-in token
+    // against (the same shared JWKS client), and the site's write budgets.
+    const sessions = createSessions({ db, now });
+    const keyStore = createKeyStore({ config, fetchImpl, log });
+    const siteLimits = createSiteLimits({ now: limitsNow || (() => Date.now()) });
+    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log, limitsNow, sessions, keyStore, siteLimits });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
@@ -59,6 +67,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     if (config.worker.enabled) scheduler.start();
     const pruneTimer = setInterval(async () => {
         try { await observations.prune(); } catch (err) { log.error(`[observations] prune: ${err.message}`); }
+        try { await sessions.prune(); } catch (err) { log.error(`[sessions] prune: ${err.message}`); }
     }, 3600 * 1000);
     pruneTimer.unref?.();
     const outboxPruneTimer = setInterval(async () => { try { await outbox.prune(); } catch (err) { log.error(`[outbox] prune: ${err.message}`); } }, 6 * 3600 * 1000);
@@ -86,7 +95,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, relay, keys, keyLoaded, auth, app, server, close };
+    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, relay, keys, keyLoaded, auth, sessions, keyStore, siteLimits, app, server, close };
 }
 
 /**

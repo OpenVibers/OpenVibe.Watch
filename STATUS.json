@@ -3,10 +3,10 @@
   "stage": "alpha",
   "code": true,
   "wave": "W18",
-  "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026) — T18 Watch complete, steps 2-3",
+  "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026) — T18 Watch complete, steps 2-3 (registry, engine, pull carriers) and step 8 (the public site)",
   "runtime": "node 22, express, PostgreSQL 18 (openvibe-sdk/db, async) + Valkey 9, fast-xml-parser",
   "port": 4730,
-  "domain": "openvibe.watch (vhost in deploy/nginx: an internal-service page, health and JSON 404s; the API is loopback-only; README \"Public host\")",
+  "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
   "contracts": "openvibe-contracts v0.112.0",
   "sdk": "openvibe-sdk v0.35.0",
   "shared": "openvibe-shared v2.13.2",
@@ -35,7 +35,26 @@
   ],
   "seededWatches": 0,
   "deployed": false,
-  "deployment": "Not deployed. Plan T18 steps 2-3 are implemented and tested in the repository (registry, check engine, http/feed/api carriers, conditional GET, extraction, conditions, observations, check runs, the API, the events); nothing runs on the host yet, and openvibe.watch has no DNS or vhost installed.",
+  "deployment": "Not deployed. Plan T18 steps 2-3 and step 8 are implemented and tested in the repository; nothing runs on the host yet, and openvibe.watch has no DNS or vhost installed.",
+  "works": [
+    "the watch registry with owner scoping (404 for another owner) validated against the released contracts",
+    "the check engine: conditional GET (ETag/Last-Modified, HEAD-first for change-only), 304/unchanged-body short circuits, recorded states, backoff and Retry-After",
+    "SSRF-guarded fetching (ports, private hosts, every redirect hop, byte cap, one deadline) and per-host spacing",
+    "the http, feed (RSS/Atom) and api carriers",
+    "extraction (text, html, css subset, json/jsonpath, regex) and conditions (changed/threshold/string, for_sec)",
+    "observations with value hashes, capped snapshots and retention; check runs with the full state set",
+    "the loopback-only API (one capability per route), watch.* events through the transactional outbox, per-actor limits",
+    "the public site: sign-in with OpenVibe.Network (OAuth2 + PKCE S256, sessions in Watch's database), the home page and four starting points, /watches (paged), the create and edit forms (server-side fieldsets, validation errors that keep the input), one watch with pause/resume/delete/check-now, the observation history and check runs, /how-it-works, /updates, and robots/sitemap/llms.txt",
+    "the site calls the registry in-process with the API's ownership rules (another person's watch is 404 on every page and form) and refuses cross-site writes"
+  ],
+  "notYet": [
+    "not deployed: no host install, DNS or vhost on openvibe.watch yet, so nothing is reachable in production",
+    "no check has run against a real external site from a deployed service (the tests use stub sites only)",
+    "the event and webhook carriers (step 5), the Run rung (step 6), Node probes (step 7) and the actions (step 4): a watch of such a kind is accepted but never fetched",
+    "an ai extraction is not a check (step 10); such a watch is recorded skipped and nothing is fetched",
+    "the site offers only page/price/feed/json watches: the kinds and the AI reading above are not in the form",
+    "notifications are the watch.watch.triggered event OpenVibe.Network turns into WATCH_TRIGGERED; no other action is dispatched"
+  ],
   "features": [
     "watch registry with owner scoping (404 for another owner) validated against the released contracts",
     "binding carrier preference order: webhook/event → ETag/Last-Modified → feed → API → Run",
@@ -48,7 +67,8 @@
     "check runs with the full terminal-state set, exponential backoff and Retry-After",
     "POST /api/v1/watches/:id/check plus the observations and checks reads",
     "watch.* events through the outbox in the same transaction as the state change",
-    "per-actor limits (openvibe-sdk/limits)"
+    "per-actor limits (openvibe-sdk/limits)",
+    "the public site: Network sign-in (PKCE S256, web_sessions with only the token hash), server-rendered pages complete without JavaScript, the four create templates, watch management, observation history and check runs, how-it-works and the changelog, robots/sitemap/llms.txt"
   ],
   "updated": "2026-10-08"
 }

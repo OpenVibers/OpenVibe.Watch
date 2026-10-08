@@ -29,18 +29,24 @@ function load(env = process.env) {
     // The JWKS the SDK's client (openvibe-sdk/auth jwksClient) fetches, caches and keeps fresh; one URL,
     // since the SDK keeps one client per URL. Defaults to Network's internal JWKS.
     const jwksUrl = strip(env.OV_NETWORK_JWKS_URL || `${networkInternalUrl}/api/.well-known/jwks`);
+    const baseUrl = strip(env.BASE_URL || (isProduction ? 'https://openvibe.watch' : `http://localhost:${port}`));
     return {
         port,
         host: env.HOST || '127.0.0.1',
         nodeEnv,
         isProduction,
         serviceId: 'watch',
-        baseUrl: strip(env.BASE_URL || (isProduction ? 'https://openvibe.watch' : `http://localhost:${port}`)),
+        baseUrl,
+        // The public site is behind nginx (and Cloudflare): trust the proxy's forwarded address, as the
+        // API's own limits and same-origin checks need the real client. 0 disables it (tests).
+        trustProxy: env.TRUST_PROXY != null ? Number(env.TRUST_PROXY) : 1,
 
         networkUrl,
         networkInternalUrl,
         jwksUrl,
         issuer: strip(env.OV_NETWORK_ISSUER || env.OV_NETWORK_URL || 'https://openvibe.network'),
+        // The issuer a person's Network session token carries (sign-in); the same Network as the API's.
+        networkIssuer: strip(env.OV_NETWORK_ISSUER || env.OV_NETWORK_URL || 'https://openvibe.network'),
         audience: 'openvibe.watch',
         // Per-actor limits (server/api/actor-limits.js): the API reads one app or module may make per
         // minute and per hour. Writes and manual checks set their own numbers there.
@@ -51,7 +57,15 @@ function load(env = process.env) {
         oauth: {
             clientId: env.OV_OAUTH_CLIENT_ID || 'watch',
             clientSecret: env.OV_OAUTH_CLIENT_SECRET || '',
+            // The site's redirect (BASE_URL + /auth/callback) and the scope and audience a person's
+            // Network session token is verified for. The scope is 'profile': the site asks for nothing
+            // beyond who the person is, because it acts on its own registry, not on Network.
+            redirectUri: strip(env.OV_OAUTH_REDIRECT_URI || `${baseUrl}/auth/callback`),
+            scope: env.OV_OAUTH_SCOPE || 'profile',
+            sessionAudience: env.OV_SESSION_AUDIENCE || 'openvibe.network',
         },
+        // The site's session cookie: Secure in production (https), off in development and tests.
+        cookies: { secure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : isProduction },
 
         // PostgreSQL (ADR-035): DATABASE_URL serves (PgBouncer), DATABASE_DIRECT_URL migrates (owner role).
         db: { url: env.DATABASE_URL || '', directUrl: env.DATABASE_DIRECT_URL || '' },

@@ -9,6 +9,7 @@ const nodeHttp = require('http');
 const { serviceAuth } = require('openvibe-contracts');
 const { load } = require('../server/config');
 const { start } = require('../server/index');
+const { startNetwork } = require('./helpers/network');
 
 const ISSUER = 'https://openvibe.network';
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
@@ -52,10 +53,21 @@ async function boot({ env = {}, worker = 'off', lookupImpl, tokenClient, now, lo
     // A stub Network JWKS serving the generated signing key, so the SDK's JWKS client has something real
     // to fetch and verify against (no test touches the internet). Its URL is overridable via env.
     const jwksSite = await site({ '/api/.well-known/jwks': () => ({ body: JSON.stringify({ keys: [publicJwk] }) }) });
+    // A stand-in Network for the site's sign-in (token endpoint + PKCE), signing with the same key the
+    // JWKS above serves. OV_NETWORK_ISSUER keeps the API's expected issuer while OV_NETWORK_URL points
+    // the authorize/token endpoints here, so existing service/user tokens still verify unchanged.
+    const network = await startNetwork({ privateKey, issuer: ISSUER });
     const config = load({
         NODE_ENV: 'test',
         PORT: '0',
+        BASE_URL: 'https://openvibe.watch',
+        COOKIE_SECURE: 'false',
+        OV_NETWORK_URL: network.url,
+        OV_NETWORK_INTERNAL_URL: network.url,
+        OV_NETWORK_ISSUER: ISSUER,
         OV_NETWORK_JWKS_URL: `${jwksSite.origin}/api/.well-known/jwks`,
+        OV_OAUTH_CLIENT_ID: 'watch',
+        OV_OAUTH_CLIENT_SECRET: 'watch-secret',
         WATCH_WORKER: worker,
         WATCH_ALLOW_PRIVATE_HOSTS: allowPrivate ? '127.0.0.1' : '',
         WATCH_HOST_MIN_INTERVAL_MS: '0',
@@ -67,7 +79,55 @@ async function boot({ env = {}, worker = 'off', lookupImpl, tokenClient, now, lo
     const testdb = await require('./db').testDb();
     const h = await start({ config, db: testdb.db, log, lookupImpl, tokenClient, limitsNow, ...(now ? { now } : {}) });
     const base = `http://127.0.0.1:${h.server.address().port}`;
-    return { ...h, base, jwksSite, async stop() { await h.close(); await testdb.close(); await jwksSite.close(); } };
+
+    /** A session cookie for a person, as /auth/callback would have set it. */
+    async function signIn(user) {
+        const token = await h.sessions.create({
+            subject: user.subject, username: user.username || null,
+            displayName: user.display_name || user.username || null, role: user.role || null,
+        });
+        return `watch_session=${token}`;
+    }
+
+    /**
+     * The whole browser sign-in, over HTTP: /auth/login → Network /oauth/authorize → /auth/callback,
+     * with the stand-in Network issuing the code against the PKCE challenge the site generated.
+     */
+    async function login(user, { next = '/watches' } = {}) {
+        const start = await get(`/auth/login?next=${encodeURIComponent(next)}`);
+        const loc = new URL(start.headers.get('location'));
+        const flow = (start.headers.getSetCookie ? start.headers.getSetCookie() : [start.headers.get('set-cookie')])
+            .map((c) => c && c.split(';')[0]).find((c) => c && c.startsWith('watch_oauth='));
+        const code = network.issueCode(user, loc.searchParams.get('code_challenge'));
+        const cb = await get(`/auth/callback?code=${code}&state=${loc.searchParams.get('state')}`, { cookie: flow });
+        const cookies = cb.headers.getSetCookie ? cb.headers.getSetCookie() : [cb.headers.get('set-cookie')];
+        const session = cookies.map((c) => c && c.split(';')[0]).find((c) => c && c.startsWith('watch_session='));
+        return { status: cb.status, location: cb.headers.get('location'), cookie: session, start };
+    }
+
+    /** The HTTP client every site test uses: a page or a form, as a person (or nobody). */
+    async function get(p, o = {}) {
+        const headers = { ...(o.headers || {}) };
+        if (o.as) {
+            const c = await signIn(o.as);
+            headers.cookie = headers.cookie ? `${c}; ${headers.cookie}` : c;
+        }
+        if (o.cookie) headers.cookie = o.cookie;
+        if (o.bearer) headers.authorization = `Bearer ${o.bearer}`;
+        let body = o.body;
+        if (o.json !== undefined) { body = JSON.stringify(o.json); headers['content-type'] = 'application/json'; }
+        if (o.form) { body = new URLSearchParams({ ...o.form }).toString(); headers['content-type'] = 'application/x-www-form-urlencoded'; }
+        const method = o.method || (body !== undefined ? 'POST' : 'GET');
+        // A form write comes from this site unless the test says otherwise (the cross-site case).
+        if (method !== 'GET' && method !== 'HEAD' && !headers.origin && !headers.Origin) headers.origin = o.origin || base;
+        if (o.origin) headers.origin = o.origin;
+        const res = await fetch(base + p, { method, headers, body, redirect: 'manual' });
+        const buf = Buffer.from(await res.arrayBuffer());
+        const text = buf.toString('utf8');
+        return { status: res.status, headers: res.headers, location: res.headers.get('location'), text, buffer: buf, json() { return JSON.parse(text); } };
+    }
+
+    return { ...h, base, jwksSite, network, signIn, login, get, async stop() { await h.close(); await testdb.close(); await jwksSite.close(); await network.close(); } };
 }
 
 async function request(base, method, p, { token, body, headers = {} } = {}) {

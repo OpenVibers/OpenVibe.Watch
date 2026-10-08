@@ -1,16 +1,35 @@
 'use strict';
-/** Express app: request context, the v1 API, health/readiness, metrics. */
+/**
+ * Express app: the public site (pages, sign-in, discovery), the v1 API, health/readiness and metrics.
+ *
+ *   /, /watches, /watches/:id, /how-it-works, /updates   the pages (http/pages.js)
+ *   /auth/*                                              Network SSO with PKCE (auth/sso.js)
+ *   /api/v1/*                                            the API (api/watches.js, api/checks.js), loopback-only at the vhost
+ *   /api/health, /api/ready, /release.json, /metrics     (loopback only)
+ *
+ * The site is server-rendered and complete without JavaScript; it acts on the registry in-process as
+ * the signed-in person's subject, with exactly the API's ownership rules. The API keeps working
+ * unchanged: bearer tokens, one capability per route, problem+json.
+ */
 const path = require('path');
 const express = require('express');
 const { http } = require('openvibe-contracts');
 const { instrument } = require('openvibe-shared/metrics');
 const { createRelease } = require('openvibe-shared/release');
+const cache = require('openvibe-shared/cache-policy');
 const { createWatchReadiness, registerWatchGauges } = require('./observability');
+const { createSso } = require('./auth/sso');
+const { createPageRoutes } = require('./http/pages');
 const { watchesRouter } = require('./api/watches');
 const { checksRouter } = require('./api/checks');
 const { createActorLimits } = require('./api/actor-limits');
+const { assetVersion, send, setRelease, SITE_NAME, TAGLINE } = require('./render/layout');
+const { html } = require('./render/html');
 const pkg = require('../package.json');
 
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+
+/** The text index non-HTML clients get for `/`; the site itself is at the same address for browsers. */
 const TEXT_INDEX = [
     'OpenVibe.Watch: persistent user-defined observations and conditions over pages, feeds and APIs.',
     'A watch states what it observes (source), how often or what pushes to it (cadence / event pattern),',
@@ -18,9 +37,8 @@ const TEXT_INDEX = [
     'it wakes. A watch never polls when an event or a webhook will do, and it never fabricates a value:',
     'a check that failed is recorded as failed, and an absent value stays absent.',
     '',
-    'This is an internal service. Its API is for OpenVibe services and their signed-in people on the',
-    'production host (bearer tokens); openvibe.watch answers only this page, /api/health, /api/ready and',
-    '/release.json.',
+    'Pages (HTML, server-rendered): /, /watches, /how-it-works, /updates. Sign in at /auth/login.',
+    'This text index is what a non-browser client gets here.',
     '',
     'GET  /api/v1/watches, /api/v1/watches/:id                                      (watch.watch.read)',
     'POST/PATCH/DELETE /api/v1/watches[/:id], POST /api/v1/watches/:id/pause, /resume (watch.watch.manage)',
@@ -32,46 +50,19 @@ const TEXT_INDEX = [
     '',
 ].join('\n');
 
-const HOME_HTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<meta name="color-scheme" content="light dark">
-<title>OpenVibe.Watch</title>
-<style>
-:root { --bg: #fff; --fg: #1a1a1a; --muted: #5c5c66; --accent: #2456d6; }
-@media (prefers-color-scheme: dark) { :root { --bg: #111317; --fg: #e8e8ec; --muted: #a0a0ab; --accent: #7aa2ff; } }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
-h1 { font-size: 1.4rem; margin: 0 0 12px; }
-p { margin: 0 0 12px; }
-.muted { color: var(--muted); font-size: .9rem; }
-a { color: var(--accent); }
-</style>
-</head>
-<body>
-<main>
-<h1>OpenVibe.Watch</h1>
-<p>This is an internal service of the OpenVibe network, not a website. It keeps the watches people and
-agents define — an observation over a page, a feed or an API, with a condition on it — and tells them,
-or their Actors and Runners, when it changes or fires.</p>
-<p>A watch prefers the cheapest way to know: an event or a webhook when one is delivered, then the
-site's own ETag/Last-Modified, then a feed, then an API, and only then an expensive browser check.
-A failed check is recorded as a failure; a value the source did not state stays absent.</p>
-<p class="muted">Health: <a href="/api/health">/api/health</a> · Readiness: <a href="/api/ready">/api/ready</a> ·
-Source code: <a href="https://github.com/OpenVibers/OpenVibe.Watch">OpenVibers/OpenVibe.Watch</a></p>
-</main>
-</body>
-</html>
-`;
+/** Content-Security-Policy for the site's HTML: the OpenVibe Frame (navbar, footer) is loaded from Network. */
+const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openvibe.network https://static.cloudflareinsights.com; "
+    + "style-src 'self' 'unsafe-inline' https://openvibe.network https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+    + "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://openvibe.network https://openvibe.media; "
+    + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
+    + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log = console, limitsNow = null }) {
+function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch }) {
     const app = express();
     app.disable('x-powered-by');
-    app.set('trust proxy', 'loopback');
+    app.set('trust proxy', config.trustProxy != null ? config.trustProxy : 'loopback');
     const release = createRelease({ service: 'watch', root: path.join(__dirname, '..') });
+    setRelease(release.release);
     // HTTP golden signals by route template, process metrics, release_info and the Watch gauges;
     // GET /metrics answers direct loopback callers only (Track O).
     const metrics = instrument(app, { service: 'watch', release: release.release });
@@ -81,7 +72,9 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     require('openvibe-shared/trace').install(app);
     app.use((req, res, next) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+        // The API and sign-in are never cached; a page decides for itself.
+        if (req.path.startsWith('/api') || req.path.startsWith('/auth')) res.setHeader('Cache-Control', 'no-store');
         next();
     });
     app.use('/api', express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] }));
@@ -97,29 +90,50 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     // GET /release.json (ADR-016) and POST /release-metrics (open tabs' update reports into /metrics).
     release.mount(app, { registry: metrics.registry });
 
-    // Per-actor limits (api/actor-limits.js), counted by the principal once a route's capability guard
-    // passed. limitsNow: the limiter's clock (tests; default the wall clock, not the check clock).
+    // ── Who is signed in (the session cookie; never a Network token) ──
+    const sso = createSso({ config, keys: keyStore, sessions, fetchImpl, now: now || (() => Date.now()), log });
+    app.use(sso.middleware());
+
+    // ── Sign-in (OAuth2 + PKCE client of OpenVibe.Network) ──
+    app.use('/auth', sso.routes());
+
+    // ── Static assets (content-hashed ?v= → immutable) ──
+    app.use('/shared', require('openvibe-shared/serve').handler());
+    app.use(express.static(PUBLIC_DIR, {
+        index: false, redirect: false,
+        setHeaders(res, filePath) {
+            const rel = path.relative(PUBLIC_DIR, filePath).split(path.sep).join('/');
+            const v = res.req && res.req.query && res.req.query.v;
+            res.setHeader('Cache-Control', cache.assetHeaders(rel, { hashed: !!v && v === assetVersion(rel) }));
+        },
+    }));
+
+    // ── The API (unchanged: bearer tokens, one capability per route, problem+json) ──
     const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log });
     app.use(watchesRouter({ registry, auth, limits }));
     app.use(checksRouter({ registry, check, observations, auth, limits }));
+    app.use('/api', (req, res) => http.sendProblem(res, 404, 'watch.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
 
-    // The public host (openvibe.watch) shows only this page, health, readiness and /release.json:
-    // Watch is internal. Browsers get a short honest HTML page, other clients the text route index.
-    // Never cached, never indexed.
-    app.get('/', (req, res) => {
+    // ── Pages ───────────────────────────────────────────────────────────────────────────────
+    // `/` answers the text index to a client that does not ask for HTML (the service's own index,
+    // kept from before the site existed); a browser falls through to the home page below.
+    app.get('/', (req, res, next) => {
+        if (/\btext\/html\b/.test(String(req.get('accept') || ''))) return next();
         res.setHeader('X-Robots-Tag', 'noindex, nofollow');
         res.setHeader('Vary', 'Accept');
-        if (/\btext\/html\b/.test(String(req.get('accept') || ''))) {
-            // The page runs no script of its own. Cloudflare Web Analytics: Cloudflare injects its beacon at the
-            // edge and the privacy text says it may measure performance; script-src loads it, connect-src is
-            // where it reports.
-            res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src https://static.cloudflareinsights.com; connect-src https://cloudflareinsights.com; base-uri 'none'; frame-ancestors 'none'");
-            return res.type('html').send(HOME_HTML);
-        }
         return res.type('text/plain').send(TEXT_INDEX);
     });
+    app.use((req, res, next) => {
+        // A page is HTML; the CSP is the site's, and every page is complete without script.
+        if (!req.path.startsWith('/api') && !req.path.startsWith('/auth')) res.setHeader('Content-Security-Policy', CSP);
+        next();
+    });
+    app.use(createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, log }));
 
-    app.use((req, res) => http.sendProblem(res, 404, 'watch.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
+    app.use((req, res) => send(res, 404, {
+        viewer: req.viewer, config, path: req.originalUrl, title: 'Not found',
+        body: html`<h1>Not found</h1><p>No page here. Try <a href="/">the home page</a> or <a href="/watches">your watches</a>.</p>`,
+    }));
 
     // eslint-disable-next-line no-unused-vars
     app.use((err, req, res, _next) => {
@@ -127,11 +141,13 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
         if (err.type === 'entity.too.large') return http.sendProblem(res, 413, 'watch.too_large', { detail: 'request body too large', ctx: req.ov });
         log.error(`[app] ${req.method} ${req.path}: ${err.stack || err}`);
         if (res.headersSent) return res.end();
-        return http.sendProblem(res, 500, 'watch.internal', { detail: 'internal error', ctx: req.ov });
+        if (req.path.startsWith('/api')) return http.sendProblem(res, 500, 'watch.internal', { detail: 'internal error', ctx: req.ov });
+        return res.status(500).type('text/plain').send(`Something went wrong on ${SITE_NAME}. ${TAGLINE}`);
     });
 
     app.locals.metrics = metrics;
+    app.locals.sso = sso;
     return app;
 }
 
-module.exports = { createApp };
+module.exports = { createApp, TEXT_INDEX, CSP };

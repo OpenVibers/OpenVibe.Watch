@@ -1,0 +1,78 @@
+/* OpenVibe.Watch — theme-token driven (openvibe-shared presets). Every page works without JavaScript. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg-primary, #0a0f1c); color: var(--text-primary, #e6edf7); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent-light, #60a5fa); }
+a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--accent, #3b82f6); outline-offset: 2px; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 16px; top: 8px; background: var(--bg-card, #131c2e); padding: 8px 12px; z-index: 10; }
+.account-bar { max-width: 1080px; margin: 0 auto; padding: 6px 16px 0; text-align: right; font-size: 14px; color: var(--text-secondary, #96a7c2); }
+.page { max-width: 1080px; margin: 0 auto; padding: 16px 16px 64px; min-height: 60vh; }
+h1 { font-size: 1.8rem; line-height: 1.2; margin: 1rem 0 .6rem; overflow-wrap: anywhere; }
+h2 { font-size: 1.3rem; margin: 1.8rem 0 .5rem; }
+h3 { font-size: 1.08rem; margin: 1.2rem 0 .4rem; }
+.muted { color: var(--text-muted, #7386a3); }
+.small { font-size: .85rem; }
+.crumbs { font-size: .9rem; color: var(--text-muted, #7386a3); margin: 8px 0; overflow-wrap: anywhere; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; }
+code { overflow-wrap: anywhere; }
+pre { background: var(--bg-secondary, #0f1729); border: 1px solid var(--border, #1f2d47); border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre; }
+pre code { overflow-wrap: normal; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-bottom: 1px solid var(--border, #1f2d47); }
+th { color: var(--text-secondary, #96a7c2); font-weight: 600; }
+.badge { display: inline-block; font-size: .75rem; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border-light, #2c3d5c); white-space: nowrap; line-height: 1.6; }
+.badge.ok { border-color: var(--success, #22c55e); color: var(--success, #22c55e); }
+.badge.info { border-color: var(--info, #38bdf8); color: var(--info, #38bdf8); }
+.badge.warn { border-color: var(--warning, #f59e0b); color: var(--warning, #f59e0b); }
+.badge.bad { border-color: var(--error, #ef4444); color: var(--error, #ef4444); }
+.notice { border-left: 3px solid var(--info, #38bdf8); padding: 8px 12px; margin: 12px 0; background: var(--bg-card, #131c2e); border-radius: 0 8px 8px 0; }
+.notice.ok { border-left-color: var(--success, #22c55e); }
+.notice.warn { border-left-color: var(--warning, #f59e0b); }
+.notice.bad { border-left-color: var(--error, #ef4444); }
+button { font: inherit; cursor: pointer; }
+form.inline { display: inline; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+/* ── Buttons ────────────────────────────────────────────── */
+.btn { display: inline-block; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-light, #2c3d5c); background: var(--bg-card, #131c2e); color: var(--text-primary, #e6edf7); text-decoration: none; font-size: .92rem; }
+.btn:hover { border-color: var(--accent, #3b82f6); }
+.btn.primary { background: var(--accent, #3b82f6); border-color: var(--accent, #3b82f6); color: #fff; }
+.btn.danger { border-color: var(--error, #ef4444); color: var(--error, #ef4444); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+.pager { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+
+/* ── The home page ──────────────────────────────────────── */
+.lede { font-size: 1.08rem; max-width: 70ch; }
+.cards { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; padding: 0; margin: 12px 0; }
+.card { border: 1px solid var(--border, #1f2d47); border-radius: 12px; background: var(--bg-card, #131c2e); padding: 14px 16px; }
+.card h3 { margin: 0 0 6px; }
+.card p { margin: 0; color: var(--text-secondary, #96a7c2); font-size: .93rem; }
+.facts { margin: 12px 0; max-width: 80ch; }
+.facts li { margin: 0 0 8px; }
+
+/* ── The forms ──────────────────────────────────────────── */
+.watch-form { max-width: 80ch; }
+.watch-form fieldset, .saved-form fieldset { border: 1px solid var(--border, #1f2d47); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+.watch-form legend, .saved-form legend { padding: 0 6px; color: var(--text-secondary, #96a7c2); }
+.field { display: flex; flex-direction: column; gap: 3px; margin: 0 0 12px; }
+.field label { font-size: .9rem; color: var(--text-secondary, #96a7c2); }
+.field input[type="text"], .field input[type="url"], .field input[type="number"], .field select { font: inherit; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border, #1f2d47); background: var(--bg-secondary, #0f1729); color: inherit; }
+.field.checkbox { flex-direction: column; }
+.field.has-error input, .field.has-error select { border-color: var(--error, #ef4444); }
+.field-error { color: var(--error, #ef4444); font-size: .88rem; }
+.hint { font-size: .82rem; }
+.fixed { color: var(--text-primary, #e6edf7); }
+.template-chooser { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; font-size: .92rem; }
+.template-chooser select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border, #1f2d47); background: var(--bg-secondary, #0f1729); color: inherit; }
+.form-actions { margin: 16px 0 8px; display: flex; gap: 12px; align-items: center; }
+
+/* ── One watch ──────────────────────────────────────────── */
+.watch-detail .facts, dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 16px 0; font-size: .92rem; }
+dl.facts dt { color: var(--text-secondary, #96a7c2); }
+dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+.in-words { font-size: 1.05rem; max-width: 80ch; }
+.changelog { max-width: 80ch; }
+.changelog h2 { margin-top: 1.6rem; }
+.changelog ul { margin: .4rem 0 1rem; }
