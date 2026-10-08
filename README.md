@@ -312,5 +312,5 @@ loopback-only (`deploy/nginx/openvibe.watch.conf`). Install: copy the unit and t
 <!-- versions:start -->
 - openvibe-contracts: v0.112.0
 - openvibe-sdk: v0.35.0
-- openvibe-shared: v2.11.0
+- openvibe-shared: v2.13.2
 <!-- versions:end -->
