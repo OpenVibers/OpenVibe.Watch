@@ -347,21 +347,46 @@ ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify =
             for (const row of rows) { const n = Number(row.n); counts[row.status] = n; counts.total += n; }
             summary = counts;
         }
-        const signedOut = signedIn(req) ? '' : html`<p><a class="btn primary" href="/auth/login?next=%2F">Sign in with OpenVibe</a> to keep watches. Reading this page needs no account.</p>`;
+        const showcase = require('openvibe-shared/showcase');
+        const yours = summary && summary.total
+            ? `You have ${summary.total} watch${summary.total === 1 ? '' : 'es'}: ${summary.active} active, ${summary.paused} paused, ${summary.failed} failing.`
+            : null;
+        const hero = showcase.hero({
+            eyebrow: 'OpenVibe.Watch · pages, feeds and APIs',
+            title: 'Know the moment it changes.',
+            accent: 'Checked politely, never guessed.',
+            lede: 'Give Watch a page, a feed or a JSON API, say which value you care about and when to tell you. It checks on the cadence you pick, records what every check found, and tells you when your condition fires.',
+            actions: signedIn(req)
+                ? [{ label: 'New watch', href: '/watches/new?template=page', primary: true }, { label: 'Your watches', href: '/watches' }]
+                : [{ label: 'Sign in to start', href: '/auth/login?next=%2Fwatches%2Fnew%3Ftemplate%3Dpage', primary: true }, { label: 'How it checks', href: '#h-check' }],
+            note: yours || 'Free while it is in alpha. Reading this page needs no account.',
+        });
+        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json' };
         page(req, res, {
             index: true,
             cache: signedIn(req) ? null : cache.htmlHeaders({ maxAge: 300 }),
             jsonLd: homeJsonLd(config),
             description: DESCRIPTION,
-            body: html`<h1>OpenVibe.Watch</h1>
-<p class="lede">Watch is a place to say what you want to know: give it a page, a feed or a JSON API, say which value you care about and the condition that fires, and it checks on the cadence you choose and records what every check found. It gets told, it does not guess — a failed check is recorded as a failure and an absent value stays absent.</p>
-${signedOut}
-<section aria-labelledby="h-start"><h2 id="h-start">Start with one of these</h2>
-<ul class="cards">
-${TEMPLATE_NAMES.map((n) => html`<li class="card"><h3><a href="/watches/new?template=${n}">${TEMPLATES[n].card}</a></h3><p>${TEMPLATES[n].cardBlurb}</p></li>`)}
-</ul>
-<p class="muted small">A watch is for a page, a feed or an API today: the kinds that arrive later (an event, a webhook, a Run check, a Node probe) and an AI reading are not offered yet, because Watch will not pretend to check something it cannot.</p></section>
-<section aria-labelledby="h-check"><h2 id="h-check">How it checks</h2>
+            styles: [showcase.STYLESHEET],
+            body: html`${raw(hero)}
+${raw(showcase.features({
+                id: 'start',
+                title: 'Start with one of these',
+                lede: 'Each opens the form filled in for that kind of watch; change anything before you save it.',
+                items: TEMPLATE_NAMES.map((n) => ({ icon: ICONS[n] || 'ov:bell', title: TEMPLATES[n].card, text: TEMPLATES[n].cardBlurb, href: `/watches/new?template=${n}` })),
+            }))}
+<p class="muted small watch-later">Pages, feeds and APIs today. Events, webhooks, browser checks through Run, Node probes and AI readings come later, and are not offered until Watch can really check them.</p>
+${raw(showcase.steps({
+                id: 'steps',
+                title: 'From a URL to a notification',
+                items: [
+                    { title: 'Point it at something', text: 'A page (and, if you like, the CSS selector of the part you care about), an RSS or Atom feed, or a JSON API and a path into it.' },
+                    { title: 'Say when to tell you', text: 'Any change, a number above or below a value, text that appears or disappears, a new item in a feed — held for a while if you want it steady.' },
+                    { title: 'Pick a cadence', text: 'Every 15 minutes, hourly, every 6 hours or daily. Watch never checks faster than that, and slower when a site asks it to wait.' },
+                    { title: 'Get told', text: 'When the condition fires, the notification arrives on your OpenVibe account, and the watch page shows every check and the value it found.' },
+                ],
+            }))}
+<section class="sc-sec" aria-labelledby="h-check"><h2 id="h-check">How it checks</h2>
 <ul class="facts">
 <li><strong>The cheapest way first.</strong> If the site gave Watch an ETag or Last-Modified, the next check asks with <code>If-None-Match</code>/<code>If-Modified-Since</code> and a “not modified” answer costs no body. When only “did it change?” matters, a <code>HEAD</code> is tried while a validator is held: two headers instead of a page.</li>
 <li><strong>Feeds and APIs before pages.</strong> The carrier order is binding: an event or webhook when one exists, then the etag, then a feed, then an API, and only then an expensive browser check. A watch checks the kind its source names.</li>
@@ -370,7 +395,7 @@ ${TEMPLATE_NAMES.map((n) => html`<li class="card"><h3><a href="/watches/new?temp
 <li><strong>Every check is recorded.</strong> Read, no change, changed, condition met, a site error, a timeout, an unreadable answer, a wait, a skipped kind — the state is kept with the value, the time and a capped snapshot, and the watch is re-armed on every path.</li>
 </ul>
 <p><a href="/how-it-works">The full picture, in plain words</a>.</p></section>
-${summary ? html`<section aria-labelledby="h-yours"><h2 id="h-yours">Your watches</h2>
+${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-yours">Your watches</h2>
 <p>${summary.total ? html`You have <strong>${summary.total}</strong> watch${summary.total === 1 ? '' : 'es'}: ${summary.active} active, ${summary.paused} paused, ${summary.disabled} disabled, ${summary.failed} failing.` : 'You have no watches yet.'} <a href="/watches">See them</a> or <a href="/watches/new?template=page">start one</a>.</p></section>` : ''}`,
         });
     });

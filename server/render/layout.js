@@ -15,7 +15,7 @@ const appIcon = require('openvibe-shared/app-icon');
 const frame = require('openvibe-shared/frame');
 const shell = require('openvibe-shared/shell');
 const cache = require('openvibe-shared/cache-policy');
-const { html, raw } = require('./html');
+const { html, raw, esc } = require('./html');
 
 const NETWORK_URL = 'https://openvibe.network';
 const SITE_NAME = 'OpenVibe.Watch';
@@ -84,6 +84,7 @@ function renderPage(o) {
         footer,
         head: `<meta name="referrer" content="strict-origin-when-cross-origin">
 ${appIcon.headTags({ site: 'watch' })}
+${(o.styles || []).map((name) => `<link rel="stylesheet" href="${esc(ovServe.url(name))}">`).join('\n')}
 <link rel="stylesheet" href="${asset('css/app.css')}">
 ${render(scripts)}
 <meta name="ov-boost" content="watch@${RELEASE}">

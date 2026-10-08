@@ -76,3 +76,10 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .changelog { max-width: 80ch; }
 .changelog h2 { margin-top: 1.6rem; }
 .changelog ul { margin: .4rem 0 1rem; }
+
+/* The home page's showcase sections sit inside .page, which has its own gutter. */
+.page .sc-hero, .page .sc-sec, .page .sc-cta { padding-left: 0; padding-right: 0; }
+.watch-later { max-width: 1080px; margin: 10px auto 0; }
+ul.facts { list-style: none; margin: 12px 0; padding: 0; max-width: none; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+ul.facts li { margin: 0; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border, #1f2d47); background: var(--bg-card, #131c2e); font-size: .92rem; line-height: 1.5; color: var(--text-secondary, #96a7c2); }
+ul.facts li strong { display: block; margin-bottom: 4px; color: var(--text-primary, #e6edf7); font-size: 1rem; }
