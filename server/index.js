@@ -29,8 +29,10 @@ const { createSessions } = require('./sessions');
 const { createKeyStore } = require('./auth/keys');
 const { createSiteLimits } = require('./http/site-limits');
 const { createApp } = require('./app');
+const accountDataLib = require('./account-data');
+const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokenClient, lookupImpl, log = console, listen = true, limitsNow = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokenClient, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -58,7 +60,13 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const sessions = createSessions({ db, now });
     const keyStore = createKeyStore({ config, fetchImpl, log });
     const siteLimits = createSiteLimits({ now: limitsNow || (() => Date.now()) });
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log, limitsNow, sessions, keyStore, siteLimits });
+    // Account export and deletion (ADR-033): the table map, and the sender to Network's internal routes with Watch's own
+    // client-credentials token (a test hands in a stand-in).
+    const accountData = accountDataLib.create({ db, log });
+    const accountSend = givenSend || (config.oauth.clientSecret
+        ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
+        : null);
+    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
@@ -81,10 +89,17 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         });
         log.log(`[watch] listening on http://${config.host}:${server.address().port}`);
     }
+    // The two account subscriptions at OpenVibe.Events, created when missing; off without EVENTS_URL,
+    // WATCH_EVENTS_SECRET or the client secret.
+    const subscriptions = listen ? startSubscriptions({
+        eventsUrl: config.events.url, endpoint: `http://127.0.0.1:${config.port}/internal/events`, secret: (config.events.secrets || [])[0],
+        networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl, log,
+    }) : null;
 
     async function close() {
         clearInterval(pruneTimer);
         clearInterval(outboxPruneTimer);
+        if (subscriptions) subscriptions.stop();
         keys.stop();
         await scheduler.stop();
         await relay.stop();
@@ -95,7 +110,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, relay, keys, keyLoaded, auth, sessions, keyStore, siteLimits, app, server, close };
+    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, relay, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
 }
 
 /**

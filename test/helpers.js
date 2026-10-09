@@ -49,7 +49,7 @@ const newAgent = () => require('openvibe-contracts').ids.newId('agent');
  * the caller says otherwise (a test of the SSRF guard boots with allowPrivate: false).
  * log: Watch's logger (default silent); limitsNow: the per-actor limiter's clock (default the wall clock).
  */
-async function boot({ env = {}, worker = 'off', lookupImpl, tokenClient, now, log = silent, limitsNow = null, allowPrivate = true } = {}) {
+async function boot({ env = {}, worker = 'off', lookupImpl, tokenClient, now, log = silent, limitsNow = null, allowPrivate = true, accountSend = null } = {}) {
     // A stub Network JWKS serving the generated signing key, so the SDK's JWKS client has something real
     // to fetch and verify against (no test touches the internet). Its URL is overridable via env.
     const jwksSite = await site({ '/api/.well-known/jwks': () => ({ body: JSON.stringify({ keys: [publicJwk] }) }) });
@@ -77,7 +77,7 @@ async function boot({ env = {}, worker = 'off', lookupImpl, tokenClient, now, lo
     });
     // One database per boot (PGlite, or WATCH_TEST_STORE=pg: the containers), dropped when the boot stops.
     const testdb = await require('./db').testDb();
-    const h = await start({ config, db: testdb.db, log, lookupImpl, tokenClient, limitsNow, ...(now ? { now } : {}) });
+    const h = await start({ config, db: testdb.db, log, lookupImpl, tokenClient, limitsNow, accountSend, ...(now ? { now } : {}) });
     const base = `http://127.0.0.1:${h.server.address().port}`;
 
     /** A session cookie for a person, as /auth/callback would have set it. */

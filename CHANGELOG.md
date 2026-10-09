@@ -3,6 +3,15 @@
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 
+## 2026-10-08 — account export and deletion (ADR-033)
+
+- `POST /internal/events` (loopback, `WATCH_EVENTS_SECRET`) answers network.account.export_requested and
+  network.account.deleted through `server/account-data.js` over `openvibe-sdk/account-data` (SDK v0.37.0, was v0.36.0).
+- **Export:** the person's watches.
+- **Deletion:** their watches with every check run, observation and endpoint state under them, and their sessions.
+- The two subscriptions are created at boot. Migration `0003_account_data.sql`, nginx `location /internal/ { return 404; }`,
+  `test/account-data.test.js`.
+
 ## 2026-10-08 — the public site (T18 step 8)
 
 - **Sign in with OpenVibe** at `/auth/login`: OAuth 2 authorization code with PKCE (S256) as the
