@@ -57,7 +57,7 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
     + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch }) {
+function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy != null ? config.trustProxy : 'loopback');
@@ -77,6 +77,14 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
         if (req.path.startsWith('/api') || req.path.startsWith('/auth')) res.setHeader('Cache-Control', 'no-store');
         next();
     });
+    // ── OpenVibe.Events → Watch (loopback only: nginx answers 404 for /internal/) ──
+    // network.account.export_requested and network.account.deleted (ADR-033), answered by openvibe-sdk/account-data's
+    // consumer over server/account-data.js. It reads the raw body itself (the v2 signature covers it), so no body
+    // parser runs before it; a request that came through a proxy is refused.
+    if (accountData) {
+        const send = accountSend || (async () => { throw new Error('OV_OAUTH_CLIENT_SECRET is not set: Watch cannot answer account events'); });
+        app.post('/internal/events', accountData.consumer({ secrets: config.events.secrets || [], send, log }));
+    }
     app.use('/api', express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] }));
 
     app.get('/api/health', (_req, res) => {

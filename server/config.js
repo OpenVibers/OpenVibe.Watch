@@ -73,6 +73,10 @@ function load(env = process.env) {
         events: {
             url: strip(env.EVENTS_URL || ''),
             relayIntervalMs: int(env.EVENTS_RELAY_INTERVAL_MS, 2000),
+            // OpenVibe.Events → Watch (ADR-033 account export and deletion, server/account-data.js): the secret(s) that
+            // sign a delivery to POST /internal/events (comma-separated for rotation, 32+ characters each; unset → 503,
+            // and no subscription is created at boot).
+            secrets: String(env.WATCH_EVENTS_SECRET || '').split(',').map((x) => x.trim()).filter(Boolean),
         },
 
         // The check worker: every WATCH_TICK_MS, start checks for active watches whose turn has come.

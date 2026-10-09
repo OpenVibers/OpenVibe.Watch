@@ -261,6 +261,19 @@ A watch owned by a service (`svc:…`) still records every observation and trigg
 but the person-facing payloads name a `usr_…`/`agt_…` owner (and a trigger a `usr_…` recipient), so
 those two events are logged as not emitted rather than sent with a payload the contract refuses.
 
+## Account export and deletion (ADR-033)
+
+`network.account.export_requested` and `network.account.deleted` arrive at `POST /internal/events`. It is
+loopback-only (nginx answers 404 for `/internal/`, and the handler refuses a forwarded request) and signed with
+`WATCH_EVENTS_SECRET`. They are answered by `server/account-data.js` over `openvibe-sdk/account-data`.
+
+- **Export:** the person's watch definitions, with how many check runs and observations each has.
+- **Deletion:** their watches go with every check run, observation and conditional-GET state under them, and so do
+  their sign-in sessions (never exported). A staff edit's `updated_by` on someone else's watch becomes NULL.
+- **Receipts:** `account_data_events` (migration 0003) keeps one per export and deletion, so a redelivery changes
+  nothing.
+- **Subscriptions:** the two are created at boot when missing.
+
 ## Security
 
 Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
@@ -310,8 +323,9 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
   `openvibe-sdk/db`
 - OpenVibe.Contracts (the watch contracts, service tokens, capability checks, problem details, ids,
   the event envelope; `wch_`/`wco_`/`ckr_` in `lib/ids.js`)
-- OpenVibe.Network (signing key; service principal `watch`)
-- OpenVibe.Events (outbound events)
+- OpenVibe.Network (signing key; service principal `watch`; grants `network.account.export.contribute` and
+  `network.account.deletion.confirm` for account export and deletion, given last, once this release is live)
+- OpenVibe.Events (outbound events; the two account subscriptions, created at boot with `events.subscription.manage`)
 
 ## Capabilities
 
