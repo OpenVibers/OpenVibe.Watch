@@ -98,6 +98,29 @@ t('project and kind filters, and bad project or cursor', async () => {
     assert.strictEqual((await api('/api/v1/resources?cursor=bad')).status, 400);
 });
 
+t('owner narrows to one person\'s watches, combines with kind and project, pages once each, and is checked', async () => {
+    const mine = await api(`/api/v1/resources?owner=${owner}`);
+    assert.strictEqual(mine.status, 200, mine.text);
+    assert.ok(contracts.validate('common.resource-list-result@1', mine.body).valid);
+    assert.deepStrictEqual(mine.body.resources.map(r => r.id), [rows[0].id, rows[2].id].sort());
+    assert.ok(mine.body.resources.every(r => r.owner && r.owner.id === owner));
+    assert.deepStrictEqual((await api(`/api/v1/resources?owner=${owner}&kind=watch.watch&project=${projectA}`)).body.resources.map(r => r.id), [rows[0].id]);
+    assert.deepStrictEqual((await api(`/api/v1/resources?owner=${owner}&kind=watch.unknown`)).body.resources, []);
+    assert.deepStrictEqual((await api(`/api/v1/resources?owner=${agent}`)).body.resources, [], 'an agent owner is named by no summary');
+    const seen = [];
+    let cursor = null;
+    do {
+        const page = await api(`/api/v1/resources?owner=${owner}&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+        seen.push(...page.body.resources.map(r => r.id));
+        cursor = page.body.next_cursor;
+    } while (cursor);
+    assert.deepStrictEqual(seen, [rows[0].id, rows[2].id].sort());
+    for (const badOwner of ['svc:live', 'usr_short', 'agent']) {
+        const r = await api(`/api/v1/resources?owner=${encodeURIComponent(badOwner)}`);
+        assert.deepStrictEqual([r.status, r.body.code], [400, 'resources.bad_query'], badOwner);
+    }
+});
+
 t('OVRN reads require a computed name and exclude deleted watches', async () => {
     for (const row of [rows[0], rows[1], rows[3]]) {
         const name = `ovrn:watch:${row.project_id}:watch/${row.id}`;

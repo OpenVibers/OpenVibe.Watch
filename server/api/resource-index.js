@@ -1,5 +1,10 @@
 'use strict';
-/** Watch's authority resource index (ADR-048): non-deleted watches for OpenVibe.Services. */
+/**
+ * Watch's authority resource index (ADR-048): non-deleted watches for OpenVibe.Services.
+ * GET /api/v1/resources?project=&kind=&owner=&cursor=&limit=. `owner` (usr_…/agt_…) answers only that subject's
+ * watches (openvibe-sdk 0.41 sends it for a person's own resources); a summary names a person owner only, so an agent
+ * subject matches nothing. A malformed filter is a 400, never ignored.
+ */
 const express = require('express');
 const contracts = require('openvibe-contracts');
 
@@ -8,6 +13,7 @@ const KIND = 'watch.watch';
 const CAPABILITY = 'watch.resource.read';
 const PROJECT_ID_RE = /^prj_[0-9A-HJKMNP-TV-Z]{26}$/;
 const USER_SUBJECT_RE = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
+const SUBJECT_RE = /^(usr|agt)_[0-9A-HJKMNP-TV-Z]{26}$/;
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
@@ -38,6 +44,9 @@ function filtersOf(query) {
     const project = typeof query.project === 'string' && query.project !== '' ? query.project : null;
     if (project && !PROJECT_ID_RE.test(project)) return { error: 'project must be a prj_ id' };
     const kind = typeof query.kind === 'string' && query.kind !== '' ? query.kind : null;
+    const owner = typeof query.owner === 'string' && query.owner !== '' ? query.owner : null;
+    if (query.owner !== undefined && typeof query.owner !== 'string') return { error: 'owner must be one usr_ or agt_ subject id' };
+    if (owner && !SUBJECT_RE.test(owner)) return { error: 'owner must be a usr_ or agt_ subject id' };
     let limit = DEFAULT_LIMIT;
     if (typeof query.limit === 'string' && query.limit !== '') {
         if (!/^\d+$/.test(query.limit) || Number(query.limit) < 1 || Number(query.limit) > MAX_LIMIT) {
@@ -50,7 +59,7 @@ function filtersOf(query) {
         cursor = decodeCursor(query.cursor);
         if (!cursor) return { error: 'cursor is not one this index issued' };
     }
-    return { project, kind, limit, cursor };
+    return { project, kind, owner, limit, cursor };
 }
 
 function resourceIndexRouter({ db, auth }) {
@@ -73,9 +82,12 @@ function resourceIndexRouter({ db, auth }) {
         const filters = filtersOf(req.query);
         if (filters.error) return bad(req, res, filters.error);
         if (filters.kind && filters.kind !== KIND) return res.json({ resources: [], next_cursor: null });
+        // A summary names a person owner only (watchSummary): an agent's watches carry none, so nothing matches it.
+        if (filters.owner && !USER_SUBJECT_RE.test(filters.owner)) return res.json({ resources: [], next_cursor: null });
         const clauses = ['deleted_at IS NULL'];
         const args = [];
         if (filters.project) { clauses.push('project_id = ?'); args.push(filters.project); }
+        if (filters.owner) { clauses.push('owner_sub = ?'); args.push(filters.owner); }
         if (filters.cursor) { clauses.push('id > ?'); args.push(filters.cursor); }
         args.push(filters.limit + 1);
         const rows = await db.prepare(`SELECT id, project_id, owner_sub, name, status, created_at, updated_at
