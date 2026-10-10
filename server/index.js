@@ -14,6 +14,7 @@ const { openDb } = require('./db');
 const { createRegistry } = require('./registry');
 const { createObservations } = require('./observations');
 const { createGuard } = require('./net/guard');
+const { createPoster } = require('./net/post');
 const { createFetcher } = require('./net/fetcher');
 const { createSpacer } = require('./spacer');
 const { createCarriers } = require('./carriers');
@@ -36,7 +37,7 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -48,7 +49,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
             'watch.observation.recorded', 'watch.watch.triggered', 'watch.check.failed'],
         validate: (env) => validate('events.event-envelope@1', env),
     });
-    const registry = createRegistry({ db, now, outbox, source: config.serviceId, maxWatchesPerOwner: config.watches.maxPerOwner });
+    const registry = createRegistry({ db, now, outbox, source: config.serviceId, maxWatchesPerOwner: config.watches.maxPerOwner, secretGrants: config.secretGrants });
     const observations = createObservations({ db, now });
     // The only way out to the internet: SSRF guard (ports, private hosts, every redirect hop), byte
     // cap, one deadline, conditional GET; per-host spacing in front of every request.
@@ -65,7 +66,9 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
             baseUrls: { network: config.networkInternalUrl }, fetch: fetchImpl,
         }))
         : null;
-    const actions = createActions({ db, config, notifications: givenNotifications || notifications, now, log });
+    // Webhook actions leave through the same guard as every fetch (server/net/post.js).
+    const post = givenPost || createPoster({ guard, userAgent: config.fetch.userAgent, timeoutMs: config.actions.webhookTimeoutMs });
+    const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, now, log });
     const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions, now, log });
     const scheduler = createScheduler({ db, check, config, now, log });
     const keys = jwksClient(config.jwksUrl, { fetch: fetchImpl, log });

@@ -36,7 +36,7 @@ function createApiCarrier({ fetcher, config }) {
         run: async ({ watch, state }) => {
             const source = watch.source;
             const out = await conditionalGet({
-                source, state, fetcher, secrets: config.secrets, accept: ACCEPT.api,
+                source, state, fetcher, secrets: config.secretGrants.viewFor(watch, config.secrets), accept: ACCEPT.api,
                 onlyChangeNeeded: onlyChange(watch),
             });
             if (out.state !== 'ok' || !out.body) return out;

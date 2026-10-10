@@ -122,7 +122,14 @@ function validateView(view) {
     return view;
 }
 
-function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50 }) {
+function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50, secretGrants = null }) {
+    /** A named secret the owner may not use is refused when the watch is saved (server/secret-grants.js). */
+    function checkSecrets(owner, rec) {
+        if (!secretGrants) return;
+        const bad = secretGrants.check(owner, rec);
+        if (bad.length) throw new RegistryError(`${bad[0].path}: ${bad[0].reason}`, 'watch.secret_not_granted');
+    }
+
     const st = {
         get: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
         countOwned: db.prepare('SELECT COUNT(*) AS n FROM watches WHERE owner_sub = ? AND deleted_at IS NULL'),
@@ -236,6 +243,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const req = validateRequest(body, { create: true });
         const owner = ownerOf(principal);
         if (!owner) throw new RegistryError('no acting subject', 'watch.invalid');
+        checkSecrets(owner, req);
         // A per-owner cap, so one caller cannot fill the registry (the API and the form both come
         // through here). The number is a config value (WATCH_MAX_PER_OWNER).
         const owned = await st.countOwned.get(owner);
@@ -297,6 +305,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         // caller that sends one fails the schema check below rather than being silently ignored.
         if (changes.project_id === undefined) delete merged.project_id;
         validateRequest(merged);
+        checkSecrets(row.owner_sub, merged);
         const sets = [];
         const args = { id: row.id, updated_at: now(), updated_by: ownerOf(principal) };
         for (const [k, v] of Object.entries(changes)) {

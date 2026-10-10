@@ -1,11 +1,15 @@
 'use strict';
 /**
- * Actions (plan T18 step 4): a condition that fires queues the watch's actions in the run's own transaction, once per
+ * Actions (plan T18 steps 4-5): a condition that fires queues the watch's actions in the run's own transaction, once per
  * trigger; the worker delivers a notification to the owner through Network (openvibe-sdk/notifications), retries a
  * refusal with backoff, skips an owner Network does not know and an owner that is not a person, and records the kinds
- * whose dispatchers are later steps as unavailable. The watch page says what happened.
+ * whose dispatchers are later steps as unavailable. A webhook action POSTs the firing signed like an Events delivery,
+ * with a delivery id that is the same on every attempt; a busy receiver is retried, 410 and a refused URL fail at once;
+ * its key must be granted to the owner (refused at save, unavailable at delivery once withdrawn) and long enough. The
+ * watch page says what happened.
  */
 const assert = require('assert');
+const { verifyDeliveryV2 } = require('openvibe-sdk/events');
 const { boot, site, suite, newUser, newAgent } = require('./helpers');
 
 const t = suite('actions');
@@ -25,6 +29,18 @@ const notifications = {
 
 const person = { sub: newUser() };
 const agent = { sub: newAgent() };
+const stranger = { sub: newUser() };
+const HOOK_KEY = 'k'.repeat(24) + 'Watch-hook-key-0123456789';
+// The receiver, as server/net/post.js would reach it: every POST recorded; hookMode decides the answer.
+const posts = [];
+let hookMode = 'ok';
+async function post(url, { headers, body }) {
+    posts.push({ url, headers, body });
+    if (hookMode === 'refused') throw Object.assign(new Error('hooks.example.org resolves to a non-public address'), { code: 'address_refused' });
+    if (hookMode === 'down') throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    return { status: { ok: 204, busy: 503, gone: 410 }[hookMode] };
+}
+const hook = (env = 'WATCH_HOOK_TEST') => ({ kind: 'webhook', url: 'https://hooks.example.org/w', secret_env: env });
 const def = (overrides = {}) => ({
     name: 'Widget price',
     source: { kind: 'http', url: `${web.origin}/price`, format: null },
@@ -53,12 +69,20 @@ t('boot', async () => {
         '/price': () => ({ headers: { 'content-type': 'text/plain' }, body: price }),
         '/set': (req, _res, ctx) => { price = ctx.url.searchParams.get('v') || price; return { body: 'ok' }; },
     });
-    svc = await boot({ notifications });
+    svc = await boot({
+        notifications, post,
+        env: {
+            WATCH_HOOK_TEST: HOOK_KEY, WATCH_HOOK_SHORT: 'too-short', WATCH_HOOK_THEIRS: HOOK_KEY,
+            WATCH_SECRET_GRANTS: JSON.stringify({
+                WATCH_HOOK_TEST: { owners: [person.sub] }, WATCH_HOOK_SHORT: { owners: [person.sub] }, WATCH_HOOK_THEIRS: { owners: [stranger.sub] },
+            }),
+        },
+    });
 });
 
 t('a check that does not fire queues nothing; one that fires queues each action once, with its run', async () => {
     mode = 'ok'; pushes.length = 0;
-    const w = await create(person, { action: [{ kind: 'notification', priority: 'high' }, { kind: 'webhook', url: 'https://hooks.example.org/w', secret_env: 'WATCH_HOOK_TEST' }] });
+    const w = await create(person, { action: [{ kind: 'notification', priority: 'high' }, { kind: 'actor-task', brief: 'look into it' }] });
     await setPrice('19.99');
     await check(w.id);
     assert.deepStrictEqual(await acts(w.id), [], 'no trigger, no action');
@@ -66,7 +90,7 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     const out = await check(w.id);
     const rows = await acts(w.id);
     assert.deepStrictEqual(rows.map((r) => [r.kind, r.state, r.check_run_id, Number(r.action_index)]),
-        [['notification', 'queued', out.run.id, 0], ['webhook', 'unavailable', out.run.id, 1]]);
+        [['notification', 'queued', out.run.id, 0], ['actor-task', 'unavailable', out.run.id, 1]]);
     assert.match(rows[1].last_error, /watch\.action_unavailable/);
 
     const r = await svc.actions.tick();
@@ -141,10 +165,99 @@ t('an owner Network does not know is skipped; a muted category is delivered; an 
     assert.strictEqual(pushes.length, before, 'nothing is pushed for an agent');
 });
 
+t('a webhook action POSTs the firing, signed as an Events delivery; the receiver verifies it with the SDK', async () => {
+    posts.length = 0; hookMode = 'ok';
+    const w = await create(person, { name: 'hooked', action: [hook()] });
+    const out = await fire(w);
+    let [row] = await acts(w.id);
+    assert.strictEqual(row.state, 'queued');
+    const r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 1, skipped: 0, retried: 0, failed: 0 });
+    assert.strictEqual(posts.length, 1);
+    const p = posts[0];
+    assert.strictEqual(p.url, 'https://hooks.example.org/w');
+    const lower = Object.fromEntries(Object.entries(p.headers).map(([k, v]) => [k.toLowerCase(), v]));
+    assert.strictEqual(lower['x-openvibe-event-type'], 'watch.watch.triggered');
+    assert.strictEqual(lower['x-openvibe-delivery-id'], `${out.run.id}.0`);
+    assert.strictEqual(lower['x-openvibe-delivery-attempt'], '1');
+    assert.ok(verifyDeliveryV2(p.body, lower, HOOK_KEY), 'the signature verifies with the key');
+    assert.ok(!verifyDeliveryV2(p.body, lower, 'x'.repeat(48)), 'and with no other key');
+    assert.ok(!p.body.includes(HOOK_KEY), 'the key itself is never sent');
+    const body = JSON.parse(p.body);
+    assert.deepStrictEqual([body.type, body.watch.id, body.watch.name, body.check_run_id], ['watch.watch.triggered', w.id, 'hooked', out.run.id]);
+    assert.strictEqual(body.watch.url, `https://openvibe.watch/watches/${w.id}`);
+    assert.deepStrictEqual([body.observation.value, body.observation.previous_value], ['7.50', '19.99']);
+    [row] = await acts(w.id);
+    assert.deepStrictEqual([row.state, row.last_error], ['sent', null]);
+    const stored = await svc.db.prepare('SELECT request FROM action_runs WHERE rid = ?').get(row.rid);
+    assert.ok(!JSON.stringify(stored).includes(HOOK_KEY), 'the key is never stored');
+});
+
+t('a busy receiver is retried on the backoff with the same delivery id; 410 and a refused URL fail at once', async () => {
+    posts.length = 0; hookMode = 'busy';
+    const w = await create(person, { name: 'busy', action: [hook()] });
+    await fire(w);
+    let r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 0, skipped: 0, retried: 1, failed: 0 });
+    let [row] = await acts(w.id);
+    assert.deepStrictEqual([row.state, row.last_error], ['queued', 'http_503']);
+    hookMode = 'down';
+    await svc.db.prepare('UPDATE action_runs SET next_attempt_at = 0 WHERE watch_id = ?').run(w.id);
+    r = await svc.actions.tick();
+    assert.strictEqual(r.retried, 1, 'a lost connection is retried too');
+    hookMode = 'ok';
+    await svc.db.prepare('UPDATE action_runs SET next_attempt_at = 0 WHERE watch_id = ?').run(w.id);
+    r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 1, skipped: 0, retried: 0, failed: 0 });
+    assert.strictEqual(posts.length, 3);
+    const ids = posts.map((x) => x.headers['X-OpenVibe-Delivery-Id']);
+    assert.strictEqual(new Set(ids).size, 1, 'one delivery id across attempts');
+    assert.deepStrictEqual(posts.map((x) => x.headers['X-OpenVibe-Delivery-Attempt']), ['1', '2', '3']);
+
+    for (const [mode, code] of [['gone', /action_gone/], ['refused', /action_url_refused/]]) {
+        hookMode = mode;
+        const g = await create(person, { name: `hook ${mode}`, action: [hook()] });
+        await fire(g);
+        r = await svc.actions.tick();
+        assert.deepStrictEqual(r, { sent: 0, skipped: 0, retried: 0, failed: 1 }, mode);
+        [row] = await acts(g.id);
+        assert.strictEqual(row.state, 'failed');
+        assert.match(row.last_error, code);
+    }
+    hookMode = 'ok';
+});
+
+t('a webhook key must be granted to the owner (refused at save, unavailable once withdrawn) and long enough', async () => {
+    posts.length = 0; hookMode = 'ok';
+    await assert.rejects(create(person, { name: 'theirs', action: [hook('WATCH_HOOK_THEIRS')] }),
+        (e) => e.code === 'watch.secret_not_granted' && /\/action\/0\/secret_env: WATCH_HOOK_THEIRS is not granted to this owner/.test(e.message));
+    await assert.rejects(create(person, { name: 'nobody', action: [hook('WATCH_HOOK_NOBODY')] }),
+        (e) => e.code === 'watch.secret_not_granted' && /not granted to any owner/.test(e.message));
+    const ok = await create(person, { name: 'patched' });
+    await assert.rejects(svc.registry.patch(ok.id, { action: [hook('WATCH_HOOK_THEIRS')] }, person), (e) => e.code === 'watch.secret_not_granted', 'a patch is checked too');
+
+    const short = await create(person, { name: 'short key', action: [hook('WATCH_HOOK_SHORT')] });
+    await fire(short);
+    let r = await svc.actions.tick();
+    assert.strictEqual(r.skipped, 1);
+    assert.match((await acts(short.id))[0].last_error, /action_secret_missing: WATCH_HOOK_SHORT is not set \(32 characters or more\)/);
+
+    // Granted when it fired, withdrawn before delivery: the worker checks again.
+    const later = await create(person, { name: 'withdrawn', action: [hook()] });
+    await fire(later);
+    const grants = svc.config.secretGrants;
+    const { createSecretGrants } = require('../server/secret-grants');
+    svc.config.secretGrants = createSecretGrants({ grants: {} });
+    try {
+        r = await svc.actions.tick();
+    } finally { svc.config.secretGrants = grants; }
+    assert.strictEqual(posts.length, 0, 'nothing was posted');
+});
+
 t('readiness counts the queue, and the watch page says what the watch did when it fired', async () => {
     const st = await svc.actions.status();
     assert.strictEqual(st.enabled, true);
-    assert.ok(st.sent >= 3 && st.queued === 0 && st.failed === 0, JSON.stringify(st));
+    assert.ok(st.sent >= 3 && st.queued === 0, JSON.stringify(st));
     const w = await create(person, { name: 'page check' });
     mode = 'ok';
     await fire(w);

@@ -6,14 +6,16 @@
  * address, a private host, a port the guard does not allow.
  */
 const assert = require('assert');
-const { boot, request, site, serviceToken, suite, rss } = require('./helpers');
+const { boot, request, site, serviceToken, suite, rss, newUser } = require('./helpers');
 
 const t = suite('carriers');
 const OWNER = { sub: 'svc:carrier-test' };
+// The person WATCH_CRED_TEST is granted to (WATCH_SECRET_GRANTS), toward the stub site's origin only.
+const PERSON = { sub: newUser() };
 let svc;
 let web;
 
-const watch = async (overrides = {}) => (await svc.registry.create({
+const watch = async (overrides = {}, owner = OWNER) => (await svc.registry.create({
     name: 'carrier watch',
     source: { kind: 'http', url: `${web.origin}/page`, format: null },
     cadence: { every_sec: 900 },
@@ -21,7 +23,7 @@ const watch = async (overrides = {}) => (await svc.registry.create({
     condition: { op: 'eq', value: 'never-matches' },
     action: [{ kind: 'notification' }],
     ...overrides,
-}, OWNER)).id;
+}, owner)).id;
 
 const check = async (id, trigger = 'manual') => await svc.check.run(id, { trigger });
 const runs = async (id) => await svc.db.prepare('SELECT * FROM check_runs WHERE watch_id = ? ORDER BY rid').all(id);
@@ -44,7 +46,7 @@ t('boot with a stub site', async () => {
         '/api.json': () => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ products: [{ sku: 'A', price: 19.5 }, { sku: 'B', price: 4 }] }) }),
         '/secret.json': (req) => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ saw: req.url }) }),
     });
-    svc = await boot();
+    svc = await boot({ env: { WATCH_SECRET_GRANTS: JSON.stringify({ WATCH_CRED_TEST: { owners: [PERSON.sub], origins: [web.origin] } }) } });
 });
 
 t('a conditional GET stores the validators, and the next check gets 304 → not_modified', async () => {
@@ -148,7 +150,7 @@ t('a credential is read from the environment by name, at fetch time, and never s
     const id = await watch({
         source: { kind: 'api', url: `${web.origin}/secret.json`, format: 'json', auth: { mode: 'query', env: 'WATCH_CRED_TEST', param: 'k' } },
         extraction: { kind: 'json', value_path: 'saw' },
-    });
+    }, PERSON);
     // not set: the check is recorded disabled and nothing is fetched
     const before = web.hits('/secret.json').length;
     const missing = await check(id);
@@ -156,7 +158,8 @@ t('a credential is read from the environment by name, at fetch time, and never s
     assert.strictEqual(missing.run.error_code, 'credential_missing');
     assert.strictEqual(web.hits('/secret.json').length, before, 'no request was made');
     // the stored watch and its view carry the NAME, never a value
-    const view = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: serviceToken('carrier-test', ['watch.watch.read']) });
+    // Read as a first-party service acting for the owner (X-OV-Subject), the way the public site reads it.
+    const view = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: serviceToken('carrier-test', ['watch.watch.read']), headers: { 'X-OV-Subject': PERSON.sub } });
     assert.strictEqual(view.status, 200);
     assert.deepStrictEqual(view.body.watch.source.auth, { mode: 'query', env: 'WATCH_CRED_TEST', param: 'k' });
     assert.ok(!view.text.includes('s3cret-value'));
@@ -169,6 +172,32 @@ t('a credential is read from the environment by name, at fetch time, and never s
     const stored = await svc.db.prepare('SELECT source FROM watches WHERE id = ?').get(id);
     assert.ok(!JSON.stringify(stored).includes('s3cret-value'), 'the value is never stored');
     delete svc.config.secrets.WATCH_CRED_TEST;
+});
+
+t('a credential name is not a capability: only a granted owner may use it, and only toward a granted origin', async () => {
+    const def = (url) => ({ source: { kind: 'api', url, format: 'json', auth: { mode: 'bearer', env: 'WATCH_CRED_TEST' } }, extraction: { kind: 'json', value_path: 'saw' } });
+    // Anyone else naming it (a service, another person) is refused when the watch is saved.
+    await assert.rejects(watch(def(`${web.origin}/secret.json`)), (e) => e.code === 'watch.secret_not_granted' && /\/source\/auth\/env: WATCH_CRED_TEST is not granted to this owner/.test(e.message));
+    await assert.rejects(watch(def(`${web.origin}/secret.json`), { sub: newUser() }), (e) => e.code === 'watch.secret_not_granted');
+    // The granted owner cannot send it anywhere else: the origin is part of the grant.
+    await assert.rejects(watch(def('https://collector.example.org/steal'), PERSON), (e) => e.code === 'watch.secret_not_granted' && /may not be sent to https:\/\/collector\.example\.org/.test(e.message));
+    const elsewhere = await watch({ source: { kind: 'api', url: `${web.origin}/secret.json`, format: 'json' }, extraction: { kind: 'json', value_path: 'saw' } }, PERSON);
+    await assert.rejects(svc.registry.patch(elsewhere, def('https://collector.example.org/steal'), PERSON), (e) => e.code === 'watch.secret_not_granted', 'a patch is checked too');
+    // Withdrawn after the watch was saved: the carrier sees no credential and sends nothing.
+    const id = await watch(def(`${web.origin}/secret.json`), PERSON);
+    svc.config.secrets.WATCH_CRED_TEST = 's3cret-value';
+    const grants = svc.config.secretGrants;
+    const { createSecretGrants } = require('../server/secret-grants');
+    svc.config.secretGrants = createSecretGrants({ grants: {} });
+    const before = web.hits('/secret.json').length;
+    try {
+        const out = await check(id);
+        assert.deepStrictEqual([out.run.state, out.run.error_code], ['disabled', 'credential_missing']);
+    } finally {
+        svc.config.secretGrants = grants;
+        delete svc.config.secrets.WATCH_CRED_TEST;
+    }
+    assert.strictEqual(web.hits('/secret.json').length, before, 'no request was made');
 });
 
 t('the feed carrier parses RSS and the extraction reads the latest entry', async () => {

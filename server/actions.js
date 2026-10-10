@@ -19,7 +19,16 @@
  *   event          `watch.watch.triggered` is emitted with every firing, in the run's own commit, so that action is
  *                  `sent` as it is queued (it needs a person as owner, as the event does). Any other event type is not
  *                  declared in Watch's manifest: `unavailable`.
- *   webhook, actor-task, codes-run, run-job
+ *   webhook        a POST of the firing (webhookFor below) to the action's https URL through the SSRF guard
+ *                  (server/net/post.js), signed with the key its secret_env names exactly as OpenVibe.Events signs a
+ *                  delivery (openvibe-sdk/events signDeliveryHeaders: X-OpenVibe-Timestamp + X-OpenVibe-Signature-V2,
+ *                  which a receiver checks with the SDK's verifier). X-OpenVibe-Delivery-Id (`<check run>.<action
+ *                  index>`) is the same on every attempt, so a receiver can drop a repeat. 2xx is `sent`. 410 and a URL
+ *                  the guard refuses are `failed` at once. Anything else is retried on the same backoff, then `failed`.
+ *                  The key must be granted to the watch's owner (WATCH_SECRET_GRANTS, server/secret-grants.js) and
+ *                  set (32 characters or more), checked when it is queued and again at delivery: otherwise
+ *                  `unavailable`.
+ *   actor-task, codes-run, run-job
  *                  `unavailable` with `watch.action_unavailable`: their dispatchers are later steps of the plan, and
  *                  the watch page says so rather than pretending they ran.
  *
@@ -29,13 +38,18 @@
  * status() says delivery is off.
  */
 
+const { signDeliveryHeaders } = require('openvibe-sdk/events');
+
 const USER_SUBJECT = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3600_000, 6 * 3600_000];
 const LEASE_MS = 2 * 60_000;
 const TITLE_MAX = 120;
 const MESSAGE_MAX = 300;
-const LATER = new Set(['webhook', 'actor-task', 'codes-run', 'run-job']);
+const LATER = new Set(['actor-task', 'codes-run', 'run-job']);
 const TRIGGERED = 'watch.watch.triggered';
+const MIN_HOOK_SECRET = 32;
+// A URL the guard refuses (server/net/guard.js) will be refused on every attempt: the delivery fails at once.
+const REFUSED_URL = new Set(['bad_url', 'port_refused', 'address_refused']);
 
 const clip = (s, n) => { const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -64,7 +78,24 @@ function notificationFor({ config, watch, run, action, value, previousValue, obs
     };
 }
 
-function createActions({ db, config, notifications = null, now = () => Date.now(), log = console }) {
+/** The body a webhook action POSTs: the firing, as the watch.watch.triggered event states it. */
+function webhookFor({ config, watch, run, value, previousValue, observedAt }) {
+    return {
+        type: TRIGGERED,
+        watch: { id: watch.id, name: watch.name, url: `${config.baseUrl}/watches/${encodeURIComponent(watch.id)}` },
+        check_run_id: run.id,
+        condition: watch.condition || null,
+        observation: {
+            observed_at: observedAt ? new Date(observedAt).toISOString() : null,
+            value: value === undefined ? null : value,
+            previous_value: previousValue === undefined ? null : previousValue,
+        },
+    };
+}
+
+function createActions({ db, config, notifications = null, post = null, now = () => Date.now(), log = console }) {
+    // Read at each use, not once: what a process was started with is what it enforces, for rows queued before it too.
+    const grants = () => config.secretGrants;
     const enabled = Boolean(notifications) && config.actions.enabled;
     let timer = null;
     let busy = null;
@@ -72,7 +103,7 @@ function createActions({ db, config, notifications = null, now = () => Date.now(
     const st = {
         insert: db.prepare(`INSERT INTO action_runs (watch_id, check_run_id, action_index, kind, owner_sub, request, state, last_error, created_at, finished_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (check_run_id, action_index) DO NOTHING`),
-        claim: db.prepare(`SELECT rid, watch_id, kind, owner_sub, request, attempts FROM action_runs
+        claim: db.prepare(`SELECT rid, watch_id, check_run_id, action_index, kind, owner_sub, request, attempts FROM action_runs
             WHERE state = 'queued' AND next_attempt_at <= ? ORDER BY next_attempt_at, rid LIMIT ? FOR UPDATE SKIP LOCKED`),
         lease: db.prepare('UPDATE action_runs SET attempts = attempts + 1, next_attempt_at = ? WHERE rid = ?'),
         finish: db.prepare('UPDATE action_runs SET state = ?, last_error = ?, finished_at = ? WHERE rid = ?'),
@@ -98,6 +129,10 @@ function createActions({ db, config, notifications = null, now = () => Date.now(
                 if (action.event_type !== TRIGGERED) { state = 'unavailable'; error = `watch.action_unavailable: ${action.event_type || 'an event'} is not an event Watch declares (only ${TRIGGERED})`; }
                 else if (!USER_SUBJECT.test(String(owner || ''))) { state = 'skipped'; error = `watch.action_no_person: ${TRIGGERED} names a person, and this watch belongs to an agent or a service`; }
                 else { state = 'sent'; error = 'emitted with the check run'; }
+            } else if (kind === 'webhook') {
+                const why = grants() ? grants().refusal(action.secret_env, owner) : `${action.secret_env} is not granted to any owner`;
+                if (why) { state = 'unavailable'; error = `watch.action_secret_not_granted: ${why}`; }
+                else request = { url: action.url, secret_env: action.secret_env, body: webhookFor({ config, watch, run, value, previousValue, observedAt }) };
             } else if (LATER.has(kind)) {
                 state = 'unavailable'; error = `watch.action_unavailable: ${kind} actions are a later step (plan T18)`;
             } else {
@@ -107,8 +142,36 @@ function createActions({ db, config, notifications = null, now = () => Date.now(
         }
     }
 
-    async function deliver(row) {
+    async function deliverWebhook(row, request, attempt) {
+        const why = grants() ? grants().refusal(request.secret_env, row.owner_sub) : 'no grants';
+        if (why) return { state: 'unavailable', error: `watch.action_secret_not_granted: ${why}` };
+        const secret = config.secrets ? config.secrets[request.secret_env] : null;
+        if (!secret || String(secret).length < MIN_HOOK_SECRET) {
+            return { state: 'unavailable', error: `watch.action_secret_missing: ${request.secret_env} is not set (${MIN_HOOK_SECRET} characters or more)` };
+        }
+        if (!post) throw Object.assign(new Error('webhook delivery is not configured in this process'), { code: 'webhook_unconfigured' });
+        const body = JSON.stringify(request.body);
+        const headers = {
+            ...signDeliveryHeaders(body, String(secret), { now: now() }),
+            'X-OpenVibe-Event-Type': TRIGGERED,
+            'X-OpenVibe-Delivery-Id': `${row.check_run_id}.${row.action_index}`,
+            'X-OpenVibe-Delivery-Attempt': String(attempt),
+        };
+        let res;
+        try {
+            res = await post(request.url, { headers, body });
+        } catch (err) {
+            if (err && REFUSED_URL.has(err.code)) return { state: 'failed', error: `watch.action_url_refused: ${err.message}` };
+            throw err;
+        }
+        if (res.status >= 200 && res.status < 300) return { state: 'sent', error: null };
+        if (res.status === 410) return { state: 'failed', error: 'watch.action_gone: the receiver answered 410 Gone' };
+        throw Object.assign(new Error(`the receiver answered ${res.status}`), { code: `http_${res.status}` });
+    }
+
+    async function deliver(row, attempt) {
         const request = typeof row.request === 'string' ? JSON.parse(row.request) : row.request;
+        if (row.kind === 'webhook') return await deliverWebhook(row, request, attempt);
         if (row.kind !== 'notification') return { state: 'unavailable', error: `watch.action_unavailable: ${row.kind}` };
         const out = await notifications.push({ subjectId: row.owner_sub, ...request });
         if (out.sent) return { state: 'sent', error: out.skipped ? 'delivered; the person switched this category off' : null };
@@ -130,9 +193,11 @@ function createActions({ db, config, notifications = null, now = () => Date.now(
             for (const r of rows) {
                 const attempt = Number(r.attempts) + 1;
                 try {
-                    const res = await deliver(r);
+                    const res = await deliver(r, attempt);
                     await st.finish.run(res.state, res.error, now(), r.rid);
-                    if (res.state === 'sent') out.sent++; else out.skipped++;
+                    if (res.state === 'sent') out.sent++;
+                    else if (res.state === 'failed') out.failed++;
+                    else out.skipped++;
                 } catch (err) {
                     const why = String((err && (err.code || err.message)) || err).slice(0, 300);
                     if (attempt >= BACKOFF_MS.length + 1) {
@@ -178,4 +243,4 @@ function createActions({ db, config, notifications = null, now = () => Date.now(
     return { queue, tick, start, stop, status, recent, enabled };
 }
 
-module.exports = { createActions, notificationFor, BACKOFF_MS };
+module.exports = { createActions, notificationFor, webhookFor, BACKOFF_MS };

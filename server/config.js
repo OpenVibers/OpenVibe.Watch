@@ -12,6 +12,7 @@
  * lives; nothing in this release executes it (steps 5-7).
  */
 const pkg = require('../package.json');
+const { parseGrants, createSecretGrants } = require('./secret-grants');
 
 const int = (v, d) => {
     const n = parseInt(v, 10);
@@ -85,7 +86,13 @@ function load(env = process.env) {
             enabled: env.WATCH_ACTIONS !== 'off',
             tickMs: int(env.WATCH_ACTIONS_TICK_MS, 5000),
             batch: int(env.WATCH_ACTIONS_BATCH, 20),
+            // A webhook receiver answers within this, or the attempt is retried on the backoff.
+            webhookTimeoutMs: int(env.WATCH_WEBHOOK_TIMEOUT_MS, 10000),
         },
+
+        // Who may use which named secret (server/secret-grants.js): a WATCH_CRED_* credential (owners and the origins
+        // it may be sent to) or a WATCH_HOOK_* webhook key (owners). No grant, no use.
+        secretGrants: createSecretGrants({ grants: parseGrants(env.WATCH_SECRET_GRANTS) }),
 
         // The check worker: every WATCH_TICK_MS, start checks for active watches whose turn has come.
         worker: {
