@@ -16,7 +16,10 @@
  *                  deleted account) is `skipped`. A refusal retries after 1, 5 and 30 minutes, 2 and 6 hours, then
  *                  `failed`. Network keeps no idempotency record for a push, so a lost answer can repeat one: at least
  *                  once. A watch owned by an agent or a service has no one to notify: `skipped`.
- *   event, webhook, actor-task, codes-run, run-job
+ *   event          `watch.watch.triggered` is emitted with every firing, in the run's own commit, so that action is
+ *                  `sent` as it is queued (it needs a person as owner, as the event does). Any other event type is not
+ *                  declared in Watch's manifest: `unavailable`.
+ *   webhook, actor-task, codes-run, run-job
  *                  `unavailable` with `watch.action_unavailable`: their dispatchers are later steps of the plan, and
  *                  the watch page says so rather than pretending they ran.
  *
@@ -31,7 +34,8 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3600_000, 6 * 3600_000]
 const LEASE_MS = 2 * 60_000;
 const TITLE_MAX = 120;
 const MESSAGE_MAX = 300;
-const LATER = new Set(['event', 'webhook', 'actor-task', 'codes-run', 'run-job']);
+const LATER = new Set(['webhook', 'actor-task', 'codes-run', 'run-job']);
+const TRIGGERED = 'watch.watch.triggered';
 
 const clip = (s, n) => { const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -90,6 +94,10 @@ function createActions({ db, config, notifications = null, now = () => Date.now(
             if (kind === 'notification') {
                 if (USER_SUBJECT.test(String(owner || ''))) request = notificationFor({ config, watch, run, action, value, previousValue, observedAt });
                 else { state = 'skipped'; error = 'watch.action_no_person: the watch belongs to an agent or a service, not a person'; }
+            } else if (kind === 'event') {
+                if (action.event_type !== TRIGGERED) { state = 'unavailable'; error = `watch.action_unavailable: ${action.event_type || 'an event'} is not an event Watch declares (only ${TRIGGERED})`; }
+                else if (!USER_SUBJECT.test(String(owner || ''))) { state = 'skipped'; error = `watch.action_no_person: ${TRIGGERED} names a person, and this watch belongs to an agent or a service`; }
+                else { state = 'sent'; error = 'emitted with the check run'; }
             } else if (LATER.has(kind)) {
                 state = 'unavailable'; error = `watch.action_unavailable: ${kind} actions are a later step (plan T18)`;
             } else {

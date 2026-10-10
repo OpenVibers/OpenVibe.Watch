@@ -87,6 +87,15 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     assert.strictEqual((await acts(w.id)).length, 2);
 });
 
+t('an event action for watch.watch.triggered is what the firing emitted (sent); another event type is not declared', async () => {
+    const w = await create(person, { name: 'quiet', action: [{ kind: 'event', event_type: 'watch.watch.triggered' }, { kind: 'event', event_type: 'shop.price.dropped' }] });
+    await fire(w);
+    const rows = await acts(w.id);
+    assert.deepStrictEqual(rows.map((r) => r.state), ['sent', 'unavailable']);
+    assert.match(rows[0].last_error, /emitted with the check run/);
+    assert.match(rows[1].last_error, /not an event Watch declares/);
+});
+
 t('a refusal waits with backoff; the next tick does not retry early; a later success sends it', async () => {
     pushes.length = 0; mode = 'fail';
     const w = await create(person);

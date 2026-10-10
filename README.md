@@ -176,7 +176,8 @@ A fired condition queues the watch's actions in the same transaction as the chec
 | kind | what happens |
 |---|---|
 | `notification` | the owner gets one OpenVibe notification through OpenVibe.Network (`openvibe-sdk/notifications`, type `WATCH_TRIGGERED`): the watch's name, the value (and the value before), and a link to the watch page. A refusal retries after 1, 5 and 30 minutes, 2 and 6 hours, then `failed`; an owner Network does not know (a deleted account) is `skipped`; a person who switched the category off is Network's decision and counts as `sent`. A watch owned by an agent or a service has no one to notify (`skipped`). Needs the Network OAuth client secret and the grants `identity.subject.resolve` + `network.notifications.push` |
-| `event`, `webhook`, `actor-task`, `codes-run`, `run-job` | recorded `unavailable` (`watch.action_unavailable`): their dispatchers are later steps, and the watch page says so |
+| `event` | `watch.watch.triggered` is emitted with every firing in the run's own commit, so that action is recorded `sent` as it is queued (the event names a person: an agent- or service-owned watch is `skipped`). Any other event type is not declared by Watch: `unavailable` |
+| `webhook`, `actor-task`, `codes-run`, `run-job` | recorded `unavailable` (`watch.action_unavailable`): their dispatchers are later steps, and the watch page says so |
 
 Rows are claimed with a short lease (FOR UPDATE SKIP LOCKED), so two processes never deliver one row at once.
 Network keeps no idempotency record for a push, so a lost answer can repeat a notification: delivery is at least once.
