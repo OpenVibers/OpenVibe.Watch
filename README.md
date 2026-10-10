@@ -377,6 +377,19 @@ Not yet demonstrated: a check against a real site from a deployed service (nothi
 yet), the event/webhook carriers (step 5), the Run rung (step 6), Node probes (step 7) and the
 actions (step 4) — each answers `watch.carrier_unavailable` and fetches nothing today.
 
+## Deploy
+
+`sudo ovhost deploy watch` on the host: git checkout at `/opt/openvibe.watch`, unit
+[deploy/systemd/openvibe-watch.service](deploy/systemd/openvibe-watch.service) as
+`openvibe-watch.service` on `127.0.0.1:4730`, env `/etc/openvibe/watch.env` (0600) from
+[.env.example](.env.example), database `ov_watch` on the host's data role (ADR-035,
+`sudo /opt/openvibe.host/roles/data/add-service.sh watch`). nginx serves `openvibe.watch` from
+[deploy/nginx/openvibe.watch.conf](deploy/nginx/openvibe.watch.conf); the pages, `/auth/*` and the
+discovery files are public, `/api/v1/*` and `/internal/*` stay loopback-only. Rollback: ovhost puts
+the previous sha back by itself when `/api/ready` does not answer 2xx after the restart; afterwards
+`sudo ovhost rollback watch --to <sha>`. Nothing is deployed yet: there is no host install, and
+openvibe.watch has no DNS or vhost.
+
 ## Public host
 
 `openvibe.watch` serves the site at the edge: the pages, `/auth/*`, `/css/*` and `/shared/*`, the
