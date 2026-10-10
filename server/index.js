@@ -21,7 +21,8 @@ const { extract } = require('./extract');
 const condition = require('./condition');   // { evaluate, hasChanged, holds, … }
 const { createCheck } = require('./check');
 const { createScheduler } = require('./scheduler');
-const { createOutbox, createRelay } = require('./events/outbox');
+const { createServiceOutbox } = require('openvibe-sdk/events');
+const { validate } = require('openvibe-contracts');
 const { jwksClient } = require('openvibe-sdk/auth');
 const { gracefulStop } = require('openvibe-sdk/service');
 const { createAuth } = require('./auth');
@@ -32,17 +33,19 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, tokenClient, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
-    const outbox = createOutbox(db, { source: config.serviceId, now });
-    const relay = createRelay({
-        db, outbox, eventsUrl: config.events.url, intervalMs: config.events.relayIntervalMs, fetchImpl, log, now,
-        tokenClient,
-        tokenOpts: config.oauth.clientSecret ? { tokenUrl: `${config.networkInternalUrl}/oauth/token`, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret } : null,
+    const outbox = createServiceOutbox({
+        db, source: config.serviceId, eventsUrl: config.events.url, networkInternalUrl: config.networkInternalUrl,
+        clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret,
+        intervalMs: config.events.relayIntervalMs, fetch: fetchImpl, log, now, table: 'service_outbox',
+        eventTypes: ['watch.watch.created', 'watch.watch.updated', 'watch.watch.paused', 'watch.watch.removed',
+            'watch.observation.recorded', 'watch.watch.triggered', 'watch.check.failed'],
+        validate: (env) => validate('events.event-envelope@1', env),
     });
-    const registry = createRegistry({ db, now, outbox, maxWatchesPerOwner: config.watches.maxPerOwner });
+    const registry = createRegistry({ db, now, outbox, source: config.serviceId, maxWatchesPerOwner: config.watches.maxPerOwner });
     const observations = createObservations({ db, now });
     // The only way out to the internet: SSRF guard (ports, private hosts, every redirect hop), byte
     // cap, one deadline, conditional GET; per-host spacing in front of every request.
@@ -51,7 +54,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const spacer = createSpacer({ hostMinIntervalMs: config.fetch.hostMinIntervalMs });
     // Every carrier goes out through the spacer, so two watches over one host never hammer it.
     const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log });
-    const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, now, log, relay });
+    const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, now, log });
     const scheduler = createScheduler({ db, check, config, now, log });
     const keys = jwksClient(config.jwksUrl, { fetch: fetchImpl, log });
     const auth = createAuth({ config, log });
@@ -66,19 +69,19 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const accountSend = givenSend || (config.oauth.clientSecret
         ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
         : null);
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend });
+    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
     const keyLoaded = keys.keys().catch(() => null);
-    relay.start();
+    outbox.start();
     if (config.worker.enabled) scheduler.start();
     const pruneTimer = setInterval(async () => {
         try { await observations.prune(); } catch (err) { log.error(`[observations] prune: ${err.message}`); }
         try { await sessions.prune(); } catch (err) { log.error(`[sessions] prune: ${err.message}`); }
     }, 3600 * 1000);
     pruneTimer.unref?.();
-    const outboxPruneTimer = setInterval(async () => { try { await outbox.prune(); } catch (err) { log.error(`[outbox] prune: ${err.message}`); } }, 6 * 3600 * 1000);
+    const outboxPruneTimer = setInterval(async () => { try { await outbox.outbox.prune(); } catch (err) { log.error(`[outbox] prune: ${err.message}`); } }, 6 * 3600 * 1000);
     outboxPruneTimer.unref?.();
 
     let server = null;
@@ -102,7 +105,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (subscriptions) subscriptions.stop();
         keys.stop();
         await scheduler.stop();
-        await relay.stop();
+        await outbox.stop();
         if (server) {
             server.closeAllConnections?.();
             await new Promise(resolve => server.close(() => resolve()));
@@ -110,7 +113,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, relay, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
+    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
 }
 
 /**

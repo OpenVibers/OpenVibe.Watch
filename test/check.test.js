@@ -33,8 +33,9 @@ const check = async (id, trigger = 'schedule') => await svc.check.run(id, { trig
 const row = async (id) => await svc.db.prepare('SELECT * FROM watches WHERE id = ?').get(id);
 const runs = async (id) => await svc.db.prepare('SELECT * FROM check_runs WHERE watch_id = ? ORDER BY rid').all(id);
 const observations = async (id) => await svc.db.prepare('SELECT * FROM observations WHERE watch_id = ? ORDER BY rid').all(id);
-const payloads = async (type) => (await svc.outbox.all()).filter(e => e.event_type === type).map(e => e.payload);
-const envelopes = async (type) => (await svc.outbox.all()).filter(e => e.event_type === type);
+const allEnvelopes = async () => (await svc.db.many('SELECT envelope FROM service_outbox ORDER BY id')).map(r => r.envelope);
+const payloads = async (type) => (await allEnvelopes()).filter(e => e.event_type === type).map(e => e.payload);
+const envelopes = async (type) => (await allEnvelopes()).filter(e => e.event_type === type);
 
 const valid = (ref, value) => {
     const r = validate(ref, value);
@@ -292,7 +293,7 @@ t('an owned-by-a-service watch records everything and emits no person-facing eve
     const run = (await runs(w.id)).pop();
     assert.strictEqual(Number(run.triggers), 1);
     assert.strictEqual((await observations(w.id)).length, 1);
-    const all = await svc.outbox.all();
+    const all = await allEnvelopes();
     const mine = all.filter(e => e.subject.id === w.id);
     // the contract names usr_/agt_ owners for an observation and a usr_ recipient for a trigger, so
     // a service-owned watch emits neither — it keeps the record in its own tables
@@ -303,7 +304,7 @@ t('an owned-by-a-service watch records everything and emits no person-facing eve
 t('an agent-owned watch emits observation.recorded but never a trigger (recipient is usr_ only)', async () => {
     const w = await create(agent, { condition: { op: 'lt', value: 100 } });
     await check(w.id);
-    const all = (await svc.outbox.all()).filter(e => e.subject.id === w.id);
+    const all = (await allEnvelopes()).filter(e => e.subject.id === w.id);
     const observed = all.filter(e => e.event_type === 'watch.observation.recorded');
     assert.strictEqual(observed.length, 1);
     valid('watch.observation.recorded@1', observed[0].payload);

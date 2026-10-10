@@ -25,6 +25,7 @@
 const { ids: contractIds, validate } = require('openvibe-contracts');
 const { nextDue } = require('./registry');
 const { ExtractError } = require('./extract');
+const { envelope } = require('./events/envelope');
 
 /** States that count as a failure, back off, and emit watch.check.failed. */
 const FAILURE_STATES = new Set(['http_error', 'timeout', 'parse_error', 'rate_limited', 'budget_exceeded', 'skipped', 'disabled']);
@@ -33,7 +34,7 @@ const FAILURE_STATES = new Set(['http_error', 'timeout', 'parse_error', 'rate_li
 const PERSON_OWNER = /^(usr|agt)_[0-9A-HJKMNP-TV-Z]{26}$/;
 const USER_OWNER = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 
-function createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, now = () => Date.now(), log = console, relay = null, ids = contractIds }) {
+function createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, now = () => Date.now(), log = console, ids = contractIds }) {
     const inflight = new Set();
 
     const st = {
@@ -170,9 +171,9 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                 id: watch.id, at: run.finished_at, success_at: successAt, state: run.state,
                 failures, next_due: armed, not_before: notBefore,
             });
-            for (const e of events || []) await outbox.enqueue(e);
+            for (const e of events || []) await outbox.emit(envelope(e, config.serviceId, now));
         });
-        if (relay) relay.flush().catch(() => { });
+        outbox.kick().catch(() => { });
         return { run, observation, met: run.triggers > 0, failures };
     }
 

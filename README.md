@@ -262,6 +262,10 @@ envelopes validated as `events.event-envelope@1` and payloads against their rele
 watch-lifecycle events (`watch.watch.created`, `watch.watch.updated`, `watch.watch.paused`,
 `watch.watch.removed`) are emitted on the registry's writes; they have no payload contract yet.
 
+`openvibe-sdk/events` owns the transactional outbox and relay. Pending rows live in `service_outbox`
+(migration 0004); the migration copies pending rows from `event_outbox`, which remains through the
+rollback window. When `EVENTS_URL` or the OAuth client secret is unset, rows wait for the relay.
+
 A watch owned by a service (`svc:…`) still records every observation and trigger in its own tables,
 but the person-facing payloads name a `usr_…`/`agt_…` owner (and a trigger a `usr_…` recipient), so
 those two events are logged as not emitted rather than sent with a payload the contract refuses.
