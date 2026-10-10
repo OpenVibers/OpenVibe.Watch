@@ -45,7 +45,7 @@
     "the http, feed (RSS/Atom) and api carriers",
     "extraction (text, html, css subset, json/jsonpath, regex) and conditions (changed/threshold/string, for_sec)",
     "observations with value hashes, capped snapshots and retention; check runs with the full state set",
-    "the loopback-only API (one capability per route), watch.* events through the transactional outbox, per-actor limits",
+    "the loopback-only API (one capability per route), watch.* events through openvibe-sdk's transactional service_outbox, per-actor limits",
     "the public site: sign-in with OpenVibe.Network (OAuth2 + PKCE S256, sessions in Watch's database), the home page and four starting points, /watches (paged), the create and edit forms (server-side fieldsets, validation errors that keep the input), one watch with pause/resume/delete/check-now, the observation history and check runs, /how-it-works, /updates, and robots/sitemap/llms.txt",
     "the site calls the registry in-process with the API's ownership rules (another person's watch is 404 on every page and form) and refuses cross-site writes"
   ],
@@ -68,7 +68,7 @@
     "check runs with the full terminal-state set, exponential backoff and Retry-After",
     "POST /api/v1/watches/:id/check plus the observations and checks reads",
     "GET /api/v1/resources and GET /api/v1/resources/:ovrn (watch.resource.read)",
-    "watch.* events through the outbox in the same transaction as the state change",
+    "watch.* events through openvibe-sdk's service_outbox in the same transaction as the state change",
     "per-actor limits (openvibe-sdk/limits)",
     "the public site: Network sign-in (PKCE S256, web_sessions with only the token hash), server-rendered pages complete without JavaScript, the four create templates, watch management, observation history and check runs, how-it-works and the changelog, robots/sitemap/llms.txt"
   ],

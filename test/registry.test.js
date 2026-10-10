@@ -10,6 +10,7 @@ const { boot, suite, newUser, newAgent } = require('./helpers');
 
 const t = suite('registry');
 let svc;
+const allEnvelopes = async () => (await svc.db.many('SELECT envelope FROM service_outbox ORDER BY id')).map(r => r.envelope);
 const me = { sub: newUser() };
 const someoneElse = { sub: newUser() };
 
@@ -97,7 +98,7 @@ t('create: an id, an owner, a name, the arm and the event', async () => {
     assert.strictEqual(row.name, 'example.org/page', 'a watch without a name is named after its source');
     assert.ok(row.next_due_at >= before && row.next_due_at <= before + 1000, 'a new watch is due on the next tick (its first reading)');
     assert.strictEqual(row.updated_by, me.sub);
-    const events = (await svc.outbox.all()).filter(e => e.subject.id === row.id);
+    const events = (await allEnvelopes()).filter(e => e.subject.id === row.id);
     assert.deepStrictEqual(events.map(e => e.event_type), ['watch.watch.created']);
     assert.strictEqual(events[0].payload.owner, me.sub);
     const agentOwned = await svc.registry.create(def(), { sub: newAgent() });
@@ -163,7 +164,7 @@ t('patch re-arms the cadence, and pause/resume through status', async () => {
     await assert.rejects(() => svc.registry.patch(w.id, { cadence: null }, me), (err) => err.code === 'watch.invalid');
     const after = await svc.registry.get(w.id);
     assert.deepStrictEqual(after.cadence, { every_sec: 3600 });
-    const events = (await svc.outbox.all()).filter(e => e.subject.id === w.id).map(e => e.event_type);
+    const events = (await allEnvelopes()).filter(e => e.subject.id === w.id).map(e => e.event_type);
     assert.deepStrictEqual(events, ['watch.watch.created', 'watch.watch.updated', 'watch.watch.paused', 'watch.watch.updated', 'watch.watch.updated']);
 });
 

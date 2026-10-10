@@ -19,6 +19,7 @@
  */
 const { validate, ids: contractIds } = require('openvibe-contracts');
 const safe = require('./safe-regex');
+const { envelope } = require('./events/envelope');
 
 /** Source kinds that reach out on a cadence; event and webhook sources are pushed to instead. */
 const POLLING = new Set(['http', 'feed', 'api', 'node', 'run']);
@@ -121,7 +122,7 @@ function validateView(view) {
     return view;
 }
 
-function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, maxWatchesPerOwner = 50 }) {
+function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50 }) {
     const st = {
         get: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
         countOwned: db.prepare('SELECT COUNT(*) AS n FROM watches WHERE owner_sub = ? AND deleted_at IS NULL'),
@@ -278,7 +279,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         // The row and its event commit together: an event exists exactly when its effect does.
         await db.tx(async () => {
             await st.insert.run(row);
-            if (outbox) await outbox.enqueue(watchEvent('watch.watch.created', row, owner, { name: rec.name, status: rec.status }));
+            if (outbox) await outbox.emit(envelope(watchEvent('watch.watch.created', row, owner, { name: rec.name, status: rec.status }), source, now));
         });
         return await st.get.get(row.id);
     }
@@ -314,7 +315,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         await db.tx(async () => {
             await db.prepare(`UPDATE watches SET ${sets.join(', ')} WHERE id = @id AND deleted_at IS NULL`).run(args);
             if (outbox && touched.length) {
-                await outbox.enqueue(watchEvent(type, row, row.owner_sub, { name: rec.name, status: rec.status, fields: touched.sort() }));
+                await outbox.emit(envelope(watchEvent(type, row, row.owner_sub, { name: rec.name, status: rec.status, fields: touched.sort() }), source, now));
             }
         });
         return await st.get.get(row.id);
@@ -327,7 +328,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const t = now();
         await db.tx(async () => {
             await db.prepare('UPDATE watches SET deleted_at = ?, updated_at = ?, next_due_at = 0 WHERE id = ?').run(t, t, row.id);
-            if (outbox) await outbox.enqueue(watchEvent('watch.watch.removed', row, row.owner_sub, { name: row.name, status: row.status }));
+            if (outbox) await outbox.emit(envelope(watchEvent('watch.watch.removed', row, row.owner_sub, { name: row.name, status: row.status }), source, now));
         });
         return { id: row.id, deleted: true };
     }

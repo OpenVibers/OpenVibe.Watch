@@ -48,7 +48,7 @@ function readers(db, { startedAt }) {
     };
 }
 
-function createWatchReadiness({ db, config, registry, check, observations, scheduler, outbox, relay, now, release = null }) {
+function createWatchReadiness({ db, config, registry, check, observations, scheduler, outbox, now, release = null }) {
     const read = readers(db, { startedAt: now() });
     const iso = (v) => (v == null ? null : new Date(v).toISOString());
     return createReadiness({
@@ -97,7 +97,7 @@ function createWatchReadiness({ db, config, registry, check, observations, sched
                 watches,
                 checks_in_flight: check.inflight().length,
                 observations: dbOk ? await read.observations() : null,
-                outbox: dbOk ? { pending: await outbox.pending(), rejected: await outbox.rejected(), relay: config.events.url ? (relay.running() ? 'running' : 'stopped') : 'off (EVENTS_URL unset)' } : null,
+                outbox: dbOk ? await outbox.status() : null,
             };
         },
     });
@@ -125,7 +125,7 @@ function registerWatchGauges(registry, { db, watches, check, outbox, now }) {
     // Left out until there is a check: a timestamp of 0 would read as "1970", not "never".
     registry.gauge({ name: 'watch_last_check_timestamp_seconds', help: 'When the last check finished (any outcome), Unix seconds', collect: async () => seconds(await read.lastCheckAt()) });
     registry.gauge({ name: 'watch_last_success_timestamp_seconds', help: 'When a watch was last checked successfully, Unix seconds', collect: async () => seconds(await read.lastSuccessAt()) });
-    registry.gauge({ name: 'watch_outbox_pending', help: 'Events waiting in the outbox', collect: async () => await outbox.pending() });
+    registry.gauge({ name: 'watch_outbox_pending', help: 'Events waiting in the outbox', collect: async () => (await outbox.status()).pending });
 }
 
 

@@ -58,7 +58,7 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
     + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, relay, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null }) {
+function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy != null ? config.trustProxy : 'loopback');
@@ -94,7 +94,7 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
 
     // Readiness (openvibe-shared/ready): 503 only when the database fails; the Network key and the
     // check worker (running, queue keeping up) are optional and degrade it (see observability.js).
-    const readiness = createWatchReadiness({ db, config, registry, check, observations, scheduler, outbox, relay, now, release: release.release });
+    const readiness = createWatchReadiness({ db, config, registry, check, observations, scheduler, outbox, now, release: release.release });
     app.get('/api/ready', readiness.handler);
     // GET /release.json (ADR-016) and POST /release-metrics (open tabs' update reports into /metrics).
     release.mount(app, { registry: metrics.registry });
