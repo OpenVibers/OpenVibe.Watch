@@ -28,7 +28,14 @@
  *                  The key must be granted to the watch's owner (WATCH_SECRET_GRANTS, server/secret-grants.js) and
  *                  set (32 characters or more), checked when it is queued and again at delivery: otherwise
  *                  `unavailable`.
- *   actor-task, codes-run, run-job
+ *   actor-task     a task for the owner on OpenVibe.Actor (server/actor.js): the action's brief, with the firing as
+ *                  context, under the owner's own allowance (Watch names them in X-OV-Subject; Actor records Watch as
+ *                  `via`), at most the action's budget_usd. The idempotency key `watch.<check run>.<action index>`
+ *                  makes a retried delivery the same task. Created is `sent` (the task id is recorded). A request
+ *                  Actor refuses as invalid (over the tier's budget, an unknown agent) is `failed` at once; anything
+ *                  else, including an allowance spent for the day, is retried on the backoff. It needs a person as
+ *                  owner: an agent- or service-owned watch is `skipped`.
+ *   codes-run, run-job
  *                  `unavailable` with `watch.action_unavailable`: their dispatchers are later steps of the plan, and
  *                  the watch page says so rather than pretending they ran.
  *
@@ -45,7 +52,8 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3600_000, 6 * 3600_000]
 const LEASE_MS = 2 * 60_000;
 const TITLE_MAX = 120;
 const MESSAGE_MAX = 300;
-const LATER = new Set(['actor-task', 'codes-run', 'run-job']);
+const LATER = new Set(['codes-run', 'run-job']);
+const TASK_MAX = 20000;
 const TRIGGERED = 'watch.watch.triggered';
 const MIN_HOOK_SECRET = 32;
 // A URL the guard refuses (server/net/guard.js) will be refused on every attempt: the delivery fails at once.
@@ -93,7 +101,21 @@ function webhookFor({ config, watch, run, value, previousValue, observedAt }) {
     };
 }
 
-function createActions({ db, config, notifications = null, post = null, now = () => Date.now(), log = console }) {
+/** The task an actor-task action gives Actor: its brief, then what fired, so the agent knows why it was woken. */
+function actorTaskFor({ config, watch, action, value, previousValue, observedAt }) {
+    const now = valueText(value);
+    const before = previousValue === undefined || previousValue === null ? null : valueText(previousValue);
+    const when = observedAt ? new Date(observedAt).toISOString() : 'just now';
+    const context = [
+        `Context: your watch “${watch.name}” fired at ${when}.`,
+        `Value: ${now}${before !== null && before !== now ? ` (was ${before})` : ''}.`,
+        `Watch: ${config.baseUrl}/watches/${encodeURIComponent(watch.id)}`,
+    ].join('\n');
+    const brief = String(action.brief || '').trim();
+    return `${brief.slice(0, TASK_MAX - context.length - 2)}\n\n${context}`;
+}
+
+function createActions({ db, config, notifications = null, post = null, actor = null, now = () => Date.now(), log = console }) {
     // Read at each use, not once: what a process was started with is what it enforces, for rows queued before it too.
     const grants = () => config.secretGrants;
     const enabled = Boolean(notifications) && config.actions.enabled;
@@ -133,6 +155,10 @@ function createActions({ db, config, notifications = null, post = null, now = ()
                 const why = grants() ? grants().refusal(action.secret_env, owner) : `${action.secret_env} is not granted to any owner`;
                 if (why) { state = 'unavailable'; error = `watch.action_secret_not_granted: ${why}`; }
                 else request = { url: action.url, secret_env: action.secret_env, body: webhookFor({ config, watch, run, value, previousValue, observedAt }) };
+            } else if (kind === 'actor-task') {
+                if (USER_SUBJECT.test(String(owner || ''))) {
+                    request = { task: actorTaskFor({ config, watch, action, value, previousValue, observedAt }), budget_usd: action.budget_usd == null ? null : action.budget_usd };
+                } else { state = 'skipped'; error = 'watch.action_no_person: an Actor task runs under a person\'s allowance, and this watch belongs to an agent or a service'; }
             } else if (LATER.has(kind)) {
                 state = 'unavailable'; error = `watch.action_unavailable: ${kind} actions are a later step (plan T18)`;
             } else {
@@ -169,9 +195,25 @@ function createActions({ db, config, notifications = null, post = null, now = ()
         throw Object.assign(new Error(`the receiver answered ${res.status}`), { code: `http_${res.status}` });
     }
 
+    async function deliverActorTask(row, request) {
+        if (!actor) throw Object.assign(new Error('Actor delivery is not configured in this process'), { code: 'actor_unconfigured' });
+        try {
+            const task = await actor.create({
+                subjectId: row.owner_sub, task: request.task, budgetUsd: request.budget_usd,
+                idempotencyKey: `watch.${row.check_run_id}.${row.action_index}`,
+            });
+            return { state: 'sent', error: `Actor task ${task.id || '(no id)'}` };
+        } catch (err) {
+            // Actor answered that this request can never succeed: over the tier's budget, an unknown agent, invalid.
+            if (err && (err.status === 422 || err.status === 400)) return { state: 'failed', error: `watch.action_refused: ${err.code || err.status}: ${String(err.detail || err.message || '').slice(0, 200)}` };
+            throw err;
+        }
+    }
+
     async function deliver(row, attempt) {
         const request = typeof row.request === 'string' ? JSON.parse(row.request) : row.request;
         if (row.kind === 'webhook') return await deliverWebhook(row, request, attempt);
+        if (row.kind === 'actor-task') return await deliverActorTask(row, request);
         if (row.kind !== 'notification') return { state: 'unavailable', error: `watch.action_unavailable: ${row.kind}` };
         const out = await notifications.push({ subjectId: row.owner_sub, ...request });
         if (out.sent) return { state: 'sent', error: out.skipped ? 'delivered; the person switched this category off' : null };
@@ -243,4 +285,4 @@ function createActions({ db, config, notifications = null, post = null, now = ()
     return { queue, tick, start, stop, status, recent, enabled };
 }
 
-module.exports = { createActions, notificationFor, webhookFor, BACKOFF_MS };
+module.exports = { createActions, notificationFor, webhookFor, actorTaskFor, BACKOFF_MS };

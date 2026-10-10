@@ -5,7 +5,9 @@
  * refusal with backoff, skips an owner Network does not know and an owner that is not a person, and records the kinds
  * whose dispatchers are later steps as unavailable. A webhook action POSTs the firing signed like an Events delivery,
  * with a delivery id that is the same on every attempt; a busy receiver is retried, 410 and a refused URL fail at once;
- * its key must be granted to the owner (refused at save, unavailable at delivery once withdrawn) and long enough. The
+ * its key must be granted to the owner (refused at save, unavailable at delivery once withdrawn) and long enough. An
+ * actor-task action gives Actor a task for the owner (X-OV-Subject) with the firing as context and a stable
+ * idempotency key; an invalid request fails at once, a busy Actor is retried, an agent-owned watch is skipped. The
  * watch page says what happened.
  */
 const assert = require('assert');
@@ -41,6 +43,17 @@ async function post(url, { headers, body }) {
     return { status: { ok: 204, busy: 503, gone: 410 }[hookMode] };
 }
 const hook = (env = 'WATCH_HOOK_TEST') => ({ kind: 'webhook', url: 'https://hooks.example.org/w', secret_env: env });
+// OpenVibe.Actor, as server/actor.js would reach it: every create recorded; actorMode decides the answer.
+const tasks = [];
+let actorMode = 'ok';
+const actor = {
+    async create(req) {
+        tasks.push(req);
+        if (actorMode === 'refuse') throw Object.assign(new Error('over the tier'), { status: 422, code: 'actor.budget.over_tier', detail: 'The free tier allows up to $0.25 per task' });
+        if (actorMode === 'busy') throw Object.assign(new Error('capacity'), { status: 503, code: 'actor.capacity.spent' });
+        return { id: `tsk_01JAB2C3D4E5F6G7H8J9K0MN${String(tasks.length).padStart(2, '0')}`, state: 'queued' };
+    },
+};
 const def = (overrides = {}) => ({
     name: 'Widget price',
     source: { kind: 'http', url: `${web.origin}/price`, format: null },
@@ -70,7 +83,7 @@ t('boot', async () => {
         '/set': (req, _res, ctx) => { price = ctx.url.searchParams.get('v') || price; return { body: 'ok' }; },
     });
     svc = await boot({
-        notifications, post,
+        notifications, post, actor,
         env: {
             WATCH_HOOK_TEST: HOOK_KEY, WATCH_HOOK_SHORT: 'too-short', WATCH_HOOK_THEIRS: HOOK_KEY,
             WATCH_SECRET_GRANTS: JSON.stringify({
@@ -82,7 +95,7 @@ t('boot', async () => {
 
 t('a check that does not fire queues nothing; one that fires queues each action once, with its run', async () => {
     mode = 'ok'; pushes.length = 0;
-    const w = await create(person, { action: [{ kind: 'notification', priority: 'high' }, { kind: 'actor-task', brief: 'look into it' }] });
+    const w = await create(person, { action: [{ kind: 'notification', priority: 'high' }, { kind: 'codes-run', repo: 'OpenVibers/OpenVibe.Watch', brief: 'look into it' }] });
     await setPrice('19.99');
     await check(w.id);
     assert.deepStrictEqual(await acts(w.id), [], 'no trigger, no action');
@@ -90,7 +103,7 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     const out = await check(w.id);
     const rows = await acts(w.id);
     assert.deepStrictEqual(rows.map((r) => [r.kind, r.state, r.check_run_id, Number(r.action_index)]),
-        [['notification', 'queued', out.run.id, 0], ['actor-task', 'unavailable', out.run.id, 1]]);
+        [['notification', 'queued', out.run.id, 0], ['codes-run', 'unavailable', out.run.id, 1]]);
     assert.match(rows[1].last_error, /watch\.action_unavailable/);
 
     const r = await svc.actions.tick();
@@ -252,6 +265,59 @@ t('a webhook key must be granted to the owner (refused at save, unavailable once
         r = await svc.actions.tick();
     } finally { svc.config.secretGrants = grants; }
     assert.strictEqual(posts.length, 0, 'nothing was posted');
+});
+
+t('an actor-task action gives Actor a task for the owner, with the firing as context and one idempotency key', async () => {
+    tasks.length = 0; actorMode = 'busy';
+    const w = await create(person, { name: 'cheap widget', action: [{ kind: 'actor-task', brief: 'Buy two if it is still in stock.', budget_usd: 0.1 }] });
+    const out = await fire(w);
+    let r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 0, skipped: 0, retried: 1, failed: 0 }, 'a busy Actor is retried');
+    actorMode = 'ok';
+    await svc.db.prepare('UPDATE action_runs SET next_attempt_at = 0 WHERE watch_id = ?').run(w.id);
+    r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 1, skipped: 0, retried: 0, failed: 0 });
+    assert.strictEqual(tasks.length, 2);
+    const [first, second] = tasks;
+    assert.strictEqual(first.subjectId, person.sub, 'the owner\'s task');
+    assert.strictEqual(first.idempotencyKey, `watch.${out.run.id}.0`);
+    assert.strictEqual(second.idempotencyKey, first.idempotencyKey, 'the retry is the same task');
+    assert.strictEqual(first.budgetUsd, 0.1);
+    assert.match(first.task, /^Buy two if it is still in stock\.\n\nContext: your watch “cheap widget” fired at /);
+    assert.match(first.task, /Value: 7\.50 \(was 19\.99\)\./);
+    assert.ok(first.task.includes(`https://openvibe.watch/watches/${w.id}`));
+    const [row] = await acts(w.id);
+    assert.deepStrictEqual([row.state, row.last_error], ['sent', 'Actor task tsk_01JAB2C3D4E5F6G7H8J9K0MN02']);
+
+    actorMode = 'refuse';
+    const over = await create(person, { name: 'too dear', action: [{ kind: 'actor-task', brief: 'x', budget_usd: 50 }] });
+    await fire(over);
+    r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 0, skipped: 0, retried: 0, failed: 1 }, 'a request Actor refuses as invalid fails at once');
+    assert.match((await acts(over.id))[0].last_error, /watch\.action_refused: actor\.budget\.over_tier/);
+    actorMode = 'ok';
+
+    const before = tasks.length;
+    const bot = await create(agent, { name: 'agent task', action: [{ kind: 'actor-task', brief: 'x' }] });
+    await fire(bot);
+    const [b] = await acts(bot.id);
+    assert.deepStrictEqual([b.state, /action_no_person/.test(b.last_error)], ['skipped', true]);
+    await svc.actions.tick();
+    assert.strictEqual(tasks.length, before, 'no task for an agent-owned watch');
+});
+
+t('server/actor.js asks Actor as Watch, for the owner, once', async () => {
+    const { createActorTasks } = require('../server/actor');
+    const calls = [];
+    const client = { async json(o) { calls.push(o); return { id: 'tsk_X', state: 'queued' }; } };
+    const out = await createActorTasks(client, { baseUrl: 'http://127.0.0.1:4950' }).create({ subjectId: person.sub, task: 'do it', budgetUsd: 0.2, idempotencyKey: 'watch.r.0' });
+    assert.deepStrictEqual(out, { id: 'tsk_X', state: 'queued' });
+    const c = calls[0];
+    assert.deepStrictEqual([c.service, c.baseUrl, c.audience, c.method, c.path, c.retries], ['actor', 'http://127.0.0.1:4950', 'openvibe.actor', 'POST', '/api/v1/tasks', 0]);
+    assert.deepStrictEqual(c.headers, { 'X-OV-Subject': person.sub });
+    assert.deepStrictEqual(c.json, { task: 'do it', idempotency_key: 'watch.r.0', budget: { per_task_usd: 0.2 } });
+    await createActorTasks(client, { baseUrl: 'x' }).create({ subjectId: person.sub, task: 'no budget', idempotencyKey: 'watch.r.1' });
+    assert.ok(!('budget' in calls[1].json), 'no budget named: Actor applies the tier\'s');
 });
 
 t('readiness counts the queue, and the watch page says what the watch did when it fired', async () => {
