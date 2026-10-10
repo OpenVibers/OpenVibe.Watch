@@ -160,6 +160,12 @@ t('validation errors re-render the form with the registry\'s message and the per
     const noValue = await create({ template: 'price', url: 'https://example.org/p', extraction: 'css', selector: '.p', op: 'lt', value: '' });
     assert.strictEqual(noValue.status, 422);
     assert.match(noValue.text, /needs a value/);
+
+    // A regex the registry refuses as unsafe (a nested quantifier) re-renders next to the selector.
+    const unsafe = await create({ template: 'price', name: 'Unsafe', url: 'https://example.org/p', extraction: 'regex', selector: '(a+)+$', op: 'lt', value: '20', cadence: '900' });
+    assert.strictEqual(unsafe.status, 422);
+    assert.match(unsafe.text, /quantified group/);
+    assert.match(unsafe.text, /value="\(a\+\)\+\$"/, 'the pattern is kept');
 });
 
 t('another person\'s watch is 404 on every page and form', async () => {

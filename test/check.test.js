@@ -21,7 +21,7 @@ const service = { sub: 'svc:check-test' };
 const def = (overrides = {}) => ({
     name: 'price watch',
     source: { kind: 'http', url: `${web.origin}/price`, format: null },
-    cadence: { every_sec: 60 },
+    cadence: { every_sec: 900 },
     extraction: { kind: 'text' },
     condition: { op: 'lt', value: 10 },
     action: [{ kind: 'notification' }],
@@ -129,13 +129,13 @@ t('a failing check is a recorded state and a watch.check.failed event, and it ba
     let r = await row(w.id);
     assert.strictEqual(r.last_state, 'parse_error');
     assert.strictEqual(Number(r.consecutive_failures), 1);
-    assert.strictEqual(r.next_due_at - r.last_check_at, 60000, 'first failure: every_sec · 2^0');
+    assert.strictEqual(r.next_due_at - r.last_check_at, 900000, 'first failure: every_sec · 2^0');
 
     const second = await check(w.id);
     assert.strictEqual(second.failures, 2);
     r = await row(w.id);
     assert.strictEqual(Number(r.consecutive_failures), 2);
-    assert.strictEqual(r.next_due_at - r.last_check_at, 120000, 'second failure: every_sec · 2^1');
+    assert.strictEqual(r.next_due_at - r.last_check_at, 1800000, 'second failure: every_sec · 2^1');
     assert.strictEqual((await payloads('watch.check.failed')).length, 2);
 
     // a success clears the backoff and the counter (19.99 is above the watch's lt 10, so it is a
@@ -145,7 +145,7 @@ t('a failing check is a recorded state and a watch.check.failed event, and it ba
     await check(w.id);
     r = await row(w.id);
     assert.deepStrictEqual([Number(r.consecutive_failures), r.last_state], [0, 'changed']);
-    assert.ok(r.next_due_at - r.last_check_at >= 60000 && r.next_due_at - r.last_check_at <= 60100, 'back to the cadence');
+    assert.ok(r.next_due_at - r.last_check_at >= 900000 && r.next_due_at - r.last_check_at <= 900100, 'back to the cadence');
 });
 
 t('a timeout is its own state, and a 429 waits as long as the site asked', async () => {
@@ -162,6 +162,24 @@ t('a timeout is its own state, and a 429 waits as long as the site asked', async
     assert.ok(r.not_before - r.last_check_at >= 119000, 'Retry-After: 120 s became not_before');
 });
 
+t('a pattern that hits its deadline is a recorded check error, never a hang', async () => {
+    // A regex extraction whose pattern slips past the static check still runs, and the deadline
+    // makes it a no-match with the reason recorded on the run (the process stays up).
+    price = 'a'.repeat(40) + '!';
+    const slowExtract = await create(person, { extraction: { kind: 'regex', selector: '^(\\w|\\w\\w)*$' } });
+    const withExtract = await check(slowExtract.id, 'manual');
+    assert.strictEqual(withExtract.run.detail, 'pattern took too long');
+    assert.strictEqual(withExtract.run.state, 'changed', 'the run completed with no match');
+    assert.strictEqual(withExtract.value, null);
+
+    // The same, for a `matches` condition: no match, and the run records why.
+    const slowMatch = await create(person, { condition: { op: 'matches', value: '^(\\w|\\w\\w)*$' } });
+    const withMatch = await check(slowMatch.id, 'manual');
+    assert.strictEqual(withMatch.run.detail, 'pattern took too long');
+    assert.strictEqual(withMatch.verdict.error, 'pattern took too long');
+    price = '19.99';
+});
+
 t('an event, webhook, node or run source is accepted but never fetched (steps 5-7)', async () => {
     const cases = [
         ['event', { kind: 'event', pattern: 'release.published' }, { op: 'exists' }],
@@ -173,7 +191,7 @@ t('an event, webhook, node or run source is accepted but never fetched (steps 5-
     for (const [kind, source, condition] of cases) {
         // an event or a webhook is pushed to and never polls; node and run sources poll through
         // OpenVibe.Node and OpenVibe.Run, so they carry a cadence — and still nothing is fetched
-        const cadence = (kind === 'event' || kind === 'webhook') ? null : { every_sec: 60 };
+        const cadence = (kind === 'event' || kind === 'webhook') ? null : { every_sec: 900 };
         const w = await create(person, { source, cadence, extraction: { kind: 'text' }, condition });
         assert.strictEqual((await row(w.id)).status, 'active');
         const out = await check(w.id, 'manual');

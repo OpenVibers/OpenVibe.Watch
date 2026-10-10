@@ -110,6 +110,11 @@ function load(env = process.env) {
             // observations_days when the watch states none; a watch may override it (watch.watch@1).
             defaultDays: int(env.WATCH_RETENTION_DEFAULT_DAYS, 90),
         },
+        // How many watches one owner (a person, an agent or a service) may hold; the registry enforces
+        // it on create, for the API and the form alike.
+        watches: {
+            maxPerOwner: Math.max(1, int(env.WATCH_MAX_PER_OWNER, 50)),
+        },
 
         // OpenVibe.Run (plan T14): the expensive last rung — browser polling — and never used before
         // steps 5-7 exist. WATCH_RUN_URL is Run's loopback port.

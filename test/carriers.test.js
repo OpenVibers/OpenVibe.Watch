@@ -16,7 +16,7 @@ let web;
 const watch = async (overrides = {}) => (await svc.registry.create({
     name: 'carrier watch',
     source: { kind: 'http', url: `${web.origin}/page`, format: null },
-    cadence: { every_sec: 60 },
+    cadence: { every_sec: 900 },
     extraction: { kind: 'text' },
     condition: { op: 'eq', value: 'never-matches' },
     action: [{ kind: 'notification' }],
@@ -122,7 +122,7 @@ t('a private host is refused before any request (nothing is even connected to)',
         const w = await alone.registry.create({
             name: 'loopback watch',
             source: { kind: 'http', url: `${aSite.origin}/page`, format: null },
-            cadence: { every_sec: 60 }, extraction: { kind: 'text' }, condition: { op: 'eq', value: 'x' },
+            cadence: { every_sec: 900 }, extraction: { kind: 'text' }, condition: { op: 'eq', value: 'x' },
             action: [{ kind: 'notification' }],
         }, OWNER);
         const out = await alone.check.run(w.id, { trigger: 'manual' });

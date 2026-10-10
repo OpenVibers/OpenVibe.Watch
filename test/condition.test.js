@@ -64,6 +64,18 @@ t('contains / matches', () => {
     assert.strictEqual(holds({ op: 'matches', value: null }, 'anything'), false);
 });
 
+t('matches: an unsafe pattern never matches, and a slow one records the timeout', () => {
+    // a nested quantifier is refused by the static check and simply does not match
+    assert.strictEqual(evaluate({ condition: { op: 'matches', value: '(a+)+$' } }, { value: 'aaaa' }).holds, false);
+    // an alternation slips past the static check; the deadline answers no match and records why
+    const slow = evaluate({ condition: { op: 'matches', value: '^(\\w|\\w\\w)*$' } }, { value: 'a'.repeat(40) + '!' });
+    assert.strictEqual(slow.holds, false);
+    assert.strictEqual(slow.error, 'pattern took too long');
+    // a normal pattern holds and records no error
+    const ok = evaluate({ condition: { op: 'matches', value: '^v\\d+\\.\\d+' } }, { value: 'v2.3 released' });
+    assert.deepStrictEqual([ok.holds, ok.error], [true, null]);
+});
+
 t('exists / absent', () => {
     const holds = (op, value) => evaluate({ condition: { op } }, { value }).holds;
     assert.strictEqual(holds('exists', 'x'), true);

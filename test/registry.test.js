@@ -16,7 +16,7 @@ const someoneElse = { sub: newUser() };
 const def = (overrides = {}) => ({
     name: 'a watch',
     source: { kind: 'http', url: 'https://example.org/page', format: null },
-    cadence: { every_sec: 60 },
+    cadence: { every_sec: 900 },
     extraction: { kind: 'text' },
     condition: { op: 'changed' },
     action: [{ kind: 'notification' }],
@@ -65,6 +65,27 @@ t('create: what a watch requires, enforced in code over the released schema', as
     await invalid(def({ source: { kind: 'http', url: 'https://example.org/x', method: 'HEAD' } }), /HEAD source states no body/);
     const head = await svc.registry.create(def({ source: { kind: 'http', url: 'https://example.org/x', method: 'HEAD' }, extraction: { kind: 'json', value_path: 'status' } }), me);
     assert.strictEqual(head.source.method, 'HEAD');
+});
+
+t('create: the 15-minute cadence floor is enforced here, not only in the form', async () => {
+    await invalid(def({ cadence: { every_sec: 60 } }), /15 minutes/);
+    await invalid(def({ cadence: { every_sec: 899 } }), /at least 900/);
+    const ok = await svc.registry.create(def({ cadence: { every_sec: 900 } }), me);
+    assert.strictEqual(ok.cadence.every_sec, 900);
+});
+
+t('create: a user regex is validated when the watch is saved, not when it runs', async () => {
+    // a nested quantifier would backtrack for minutes over a 64 KiB body; it never reaches the worker
+    await invalid(def({ extraction: { kind: 'regex', selector: '(a+)+$' } }), /extraction\/selector/);
+    await invalid(def({ condition: { op: 'matches', value: '(a+)+$' } }), /condition\/value/);
+    // an invalid or oversized pattern too
+    await invalid(def({ extraction: { kind: 'regex', selector: '(' } }), /extraction\/selector/);
+    await invalid(def({ condition: { op: 'matches', value: 'x'.repeat(600) } }), /condition\/value/);
+    // a normal pattern is accepted
+    const w = await svc.registry.create(def({ extraction: { kind: 'regex', selector: '(\\d+\\.\\d+) EUR' } }), me);
+    assert.strictEqual(w.extraction.selector, '(\\d+\\.\\d+) EUR');
+    const m = await svc.registry.create(def({ condition: { op: 'matches', value: '^v\\d+\\.\\d+' } }), me);
+    assert.strictEqual(m.condition.value, '^v\\d+\\.\\d+');
 });
 
 t('create: an id, an owner, a name, the arm and the event', async () => {
@@ -191,6 +212,22 @@ t('all(): the keyset page is id order (a wch_ ULID is creation order)', async ()
     await svc.registry.patch(ids[0], { status: 'paused' }, other);
     assert.deepStrictEqual((await svc.registry.all(other, { status: 'paused' })).map(r => r.id), [ids[0]]);
     assert.strictEqual((await svc.registry.all(other, { status: 'active' })).length, 4);
+});
+
+t('create: one owner holds at most WATCH_MAX_PER_OWNER watches, per owner', async () => {
+    const capped = await boot({ env: { WATCH_MAX_PER_OWNER: '2' } });
+    try {
+        const owner = { sub: newUser() };
+        await capped.registry.create(def(), owner);
+        await capped.registry.create(def(), owner);
+        await assert.rejects(() => capped.registry.create(def(), owner), (err) => {
+            assert.strictEqual(err.code, 'watch.invalid');
+            assert.match(err.message, /at most 2 watches/);
+            return true;
+        });
+        // the cap is per owner: another subject still creates
+        await capped.registry.create(def(), { sub: newUser() });
+    } finally { await capped.stop(); }
 });
 
 t('done', async () => { await svc.stop(); });

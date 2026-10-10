@@ -87,7 +87,17 @@ t('regex: the first match, a group when the pattern has one', () => {
     assert.strictEqual(extract({ kind: 'regex', selector: '/(\\d+) items/i' }, { body: body('12 ITEMS left') }).value, '12');
     assert.strictEqual(extract({ kind: 'regex', selector: 'nothing' }, { body: body('abc') }).value, null);
     assert.throws(() => extract({ kind: 'regex', selector: '(' }, { body: body('x') }), (e) => e.code === 'parse_error');
-    assert.throws(() => extract({ kind: 'regex', selector: 'x'.repeat(300) }, { body: body('x') }), (e) => e.code === 'unsupported');
+    assert.throws(() => extract({ kind: 'regex', selector: 'x'.repeat(600) }, { body: body('x') }), (e) => e.code === 'unsupported');
+});
+
+t('regex: an unsafe pattern is refused, and a slow one times out as no match', () => {
+    // a nested quantifier is refused at compile time (the registry refuses it at save time too)
+    assert.throws(() => extract({ kind: 'regex', selector: '(a+)+$' }, { body: body('aaaa') }),
+        (e) => e.code === 'unsupported' && /quantified group/.test(e.message));
+    // an alternation slips past the static check; the deadline makes it a no-match with the reason
+    const out = extract({ kind: 'regex', selector: '^(\\w|\\w\\w)*$' }, { body: body('a'.repeat(40) + '!') });
+    assert.strictEqual(out.value, null, 'a pattern that hit its deadline states no match');
+    assert.strictEqual(out.error, 'pattern took too long');
 });
 
 t('ai is not a check: it refuses, and the refusal is `unsupported`', () => {

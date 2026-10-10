@@ -253,6 +253,8 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         const stated = out.state === 'ok';
         let value = null;
         let snapshot = null;
+        // A pattern that hit its deadline stated no match; the reason is recorded on the run.
+        let patternError = null;
         if (stated) {
             try {
                 const extracted = extract(watch.extraction, {
@@ -263,6 +265,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                 });
                 value = extracted.value;
                 snapshot = extracted.snapshot;
+                if (extracted.error) patternError = extracted.error;
             } catch (err) {
                 const unsupported = err instanceof ExtractError && err.code === 'unsupported';
                 const run = {
@@ -310,6 +313,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         const lastFired = await st.lastTrigger.get(watch.id);
         const repeat = verdict.met && !verdict.changed && lastFired != null && verdict.since != null && lastFired.started_at >= verdict.since;
         const met = verdict.met && !repeat;
+        if (verdict.error && !patternError) patternError = verdict.error;
 
         const retentionDays = watch.retention && Number.isInteger(watch.retention.observations_days)
             ? watch.retention.observations_days
@@ -321,6 +325,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
             state: met ? 'condition_met' : (stated ? (verdict.changed ? 'changed' : 'ok') : out.state),
             http_status: out.http_status ?? null, bytes: out.bytes ?? null, raw_body_hash: out.raw_body_hash ?? null,
             observations: stated ? 1 : 0, triggers: met ? 1 : 0, finished_at: finishedAt,
+            detail: patternError ? String(patternError).slice(0, 500) : null,
         };
 
         // The observation row is built before the transaction (it needs the previous one's hash),
