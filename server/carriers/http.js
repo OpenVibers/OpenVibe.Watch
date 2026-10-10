@@ -151,7 +151,7 @@ function createHttpCarrier({ fetcher, config }) {
     return {
         name: 'http',
         run: async ({ watch, state }) => conditionalGet({
-            source: watch.source, state, fetcher, secrets: config.secrets, accept: ACCEPT.http,
+            source: watch.source, state, fetcher, secrets: config.secretGrants.viewFor(watch, config.secrets), accept: ACCEPT.http,
             onlyChangeNeeded: onlyChange(watch),
         }),
     };

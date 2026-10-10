@@ -125,7 +125,7 @@ function createFeedCarrier({ fetcher, config }) {
         name: 'feed',
         run: async ({ watch, state }) => {
             const out = await conditionalGet({
-                source: watch.source, state, fetcher, secrets: config.secrets, accept: ACCEPT.feed,
+                source: watch.source, state, fetcher, secrets: config.secretGrants.viewFor(watch, config.secrets), accept: ACCEPT.feed,
                 onlyChangeNeeded: onlyChange(watch),
             });
             if (out.state !== 'ok' || !out.body) return out;

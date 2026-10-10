@@ -177,7 +177,8 @@ A fired condition queues the watch's actions in the same transaction as the chec
 |---|---|
 | `notification` | the owner gets one OpenVibe notification through OpenVibe.Network (`openvibe-sdk/notifications`, type `WATCH_TRIGGERED`): the watch's name, the value (and the value before), and a link to the watch page. A refusal retries after 1, 5 and 30 minutes, 2 and 6 hours, then `failed`; an owner Network does not know (a deleted account) is `skipped`; a person who switched the category off is Network's decision and counts as `sent`. A watch owned by an agent or a service has no one to notify (`skipped`). Needs the Network OAuth client secret and the grants `identity.subject.resolve` + `network.notifications.push` |
 | `event` | `watch.watch.triggered` is emitted with every firing in the run's own commit, so that action is recorded `sent` as it is queued (the event names a person: an agent- or service-owned watch is `skipped`). Any other event type is not declared by Watch: `unavailable` |
-| `webhook`, `actor-task`, `codes-run`, `run-job` | recorded `unavailable` (`watch.action_unavailable`): their dispatchers are later steps, and the watch page says so |
+| `webhook` | a POST of the firing (`type`, `watch {id, name, url}`, `check_run_id`, `condition`, `observation {observed_at, value, previous_value}`) to the action's https URL, through the same SSRF guard as every fetch, never following a redirect ([server/net/post.js](server/net/post.js)). It is signed with the key `secret_env` names exactly as OpenVibe.Events signs a delivery (`X-OpenVibe-Timestamp` + `X-OpenVibe-Signature-V2`; check it with openvibe-sdk/events `verifyDeliveryV2`). `X-OpenVibe-Delivery-Id` (`<check run>.<action index>`) is the same on every attempt, so a receiver can drop a repeat. 2xx is `sent`. 410 or a URL the guard refuses is `failed` at once. Anything else, or a lost connection, is retried on the backoff, then `failed`. The key must be granted to the owner (`WATCH_SECRET_GRANTS`, below) and set, 32 characters or more: otherwise `unavailable` |
+| `actor-task`, `codes-run`, `run-job` | recorded `unavailable` (`watch.action_unavailable`): their dispatchers are later steps, and the watch page says so |
 
 Rows are claimed with a short lease (FOR UPDATE SKIP LOCKED), so two processes never deliver one row at once.
 Network keeps no idempotency record for a push, so a lost answer can repeat a notification: delivery is at least once.
@@ -319,9 +320,16 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
   resolved address public at connect time (no DNS rebinding), each redirect hop re-checked, one
   deadline and a byte cap per response. Exactly one path reaches the network — the carriers, through
   the fetcher — and only for a kind whose carrier exists. `test/carriers.test.js`.
-- **Secrets.** A source's credential is the **name** of a `WATCH_CRED_*` variable, read at fetch
-  time, sent only to the configured origin, never stored or logged. `OV_OAUTH_CLIENT_SECRET` and the
-  credentials live in `/etc/openvibe/watch.env` (0600).
+- **Secrets.** A source's credential is the **name** of a `WATCH_CRED_*` variable, and a webhook
+  action's signing key the name of a `WATCH_HOOK_*` one. Both are read at use time, never stored or
+  logged. A name is **not a capability**: the operator grants each one in `WATCH_SECRET_GRANTS`
+  ([server/secret-grants.js](server/secret-grants.js)). A credential may be used only by the owners
+  it is granted to, and sent only to the origins it is granted for. A webhook key may be used only by
+  its owners. Otherwise anyone could name an operator's credential with a URL of their own, or have
+  deliveries signed with another receiver's key. A name without a grant is usable by nobody. A save
+  that names one is refused with 422 `watch.secret_not_granted` (the form shows why), and the carrier
+  and the action worker check again at use. `OV_OAUTH_CLIENT_SECRET`, the credentials and the grants
+  live in `/etc/openvibe/watch.env` (0600).
 - **Data.** An observation records what the source stated, never a guess; snapshots are capped and
   pruned by retention; a failed check never records an observation.
 
