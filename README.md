@@ -219,6 +219,11 @@ an app or module may not.
 | `watch.watch.manage` | `POST /api/v1/watches`, `PATCH /api/v1/watches/:id`, `POST /api/v1/watches/:id/pause`, `POST /api/v1/watches/:id/resume`, `DELETE /api/v1/watches/:id` |
 | `watch.observation.read` | `GET /api/v1/watches/:id/observations?before=&limit=`, `GET /api/v1/watches/:id/checks?before=&limit=` |
 | `watch.check.run` | `POST /api/v1/watches/:id/check` (404 unknown, 409 `watch.busy` while one runs, 409 `watch.disabled` for a paused watch, 422 `watch.carrier_unavailable`) |
+| `watch.resource.read` | `GET /api/v1/resources?project=&kind=&cursor=&limit=`, `GET /api/v1/resources/:ovrn` (first-party service token only) |
+
+The loopback-only authority index lists non-deleted `watch.watch` resources as
+`common.resource-list-result@1`. It orders watches by id, pages with an opaque cursor, and
+includes an OVRN only for a watch with a valid project id.
 
 The list answer is exactly `watch.watch-result@1` (`{ watches }`): page with
 `before=<the last watch's id>`, since a `wch_` id is a ULID, i.e. creation order. Every watch view,
