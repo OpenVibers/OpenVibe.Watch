@@ -12,7 +12,7 @@
  *        updated with what the site said (ETag, Last-Modified, status, body hash)
  *     5  extract → value; record an observation (value, hashes, changed, condition, retention)
  *     6  evaluate the condition; a condition that MET writes check_runs(triggers = 1, state
- *        'condition_met') and emits watch.watch.triggered. Actions are step 4 of the plan and are
+ *        'condition_met'), emits watch.watch.triggered and queues the watch's actions (server/actions.js). Formerly
  *        NOT dispatched here: a met condition records the trigger and emits the event, nothing else
  *     7  arm next_due_at (+ jitter, or exponential backoff after a failure, capped) and not_before
  *        (Retry-After)
@@ -34,7 +34,7 @@ const FAILURE_STATES = new Set(['http_error', 'timeout', 'parse_error', 'rate_li
 const PERSON_OWNER = /^(usr|agt)_[0-9A-HJKMNP-TV-Z]{26}$/;
 const USER_OWNER = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 
-function createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, now = () => Date.now(), log = console, ids = contractIds }) {
+function createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions = null, now = () => Date.now(), log = console, ids = contractIds }) {
     const inflight = new Set();
 
     const st = {
@@ -55,7 +55,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         run: db.prepare('SELECT * FROM check_runs WHERE id = ?'),
         // The last check that fired the condition: a repeat needs a value that is new or a new run
         // of holding, so a satisfied watch does not fire once per check while nothing moves.
-        lastTrigger: db.prepare('SELECT id, started_at FROM check_runs WHERE watch_id = ? AND triggers > 0 ORDER BY rid DESC LIMIT 1'),
+        lastTrigger: db.prepare('SELECT id, started_at, finished_at FROM check_runs WHERE watch_id = ? AND triggers > 0 ORDER BY rid DESC LIMIT 1'),
     };
 
     const boolOf = (v) => Boolean(Number(v));
@@ -161,7 +161,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
      * the events and the watch's re-armed runtime state all commit together, or none of them do.
      * `failures` is the consecutive failure count (0 when the check succeeded).
      */
-    async function settle({ watch, run, failures, successAt = null, notBefore = 0, events = [], observation = null, endpoint = null }) {
+    async function settle({ watch, run, failures, successAt = null, notBefore = 0, events = [], observation = null, endpoint = null, fired = null }) {
         const armed = nextDue(watch, run.finished_at, { failures, maxBackoffMs: config.worker.maxBackoffMs });
         await db.tx(async () => {
             if (observation) await observations.insert(observation);
@@ -172,6 +172,8 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                 failures, next_due: armed, not_before: notBefore,
             });
             for (const e of events || []) await outbox.emit(envelope(e, config.serviceId, now));
+            // A run that fired queues the watch's actions in this same commit (server/actions.js): once per trigger.
+            if (fired && actions) await actions.queue({ watch, run, ...fired });
         });
         outbox.kick().catch(() => { });
         return { run, observation, met: run.triggers > 0, failures };
@@ -312,7 +314,10 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         // value that is new (changed) or for a new run of holding (the trail began after the last
         // firing) — never once per check while nothing moves.
         const lastFired = await st.lastTrigger.get(watch.id);
-        const repeat = verdict.met && !verdict.changed && lastFired != null && verdict.since != null && lastFired.started_at >= verdict.since;
+        // The trail's `since` is the observed_at of its first holding observation, which the run that recorded it stamps
+        // with its finish time; the firing run's start is always earlier, so the last firing is compared by when it
+        // finished (comparing its start made every check while the condition held fire again).
+        const repeat = verdict.met && !verdict.changed && lastFired != null && verdict.since != null && Number(lastFired.finished_at) >= verdict.since;
         const met = verdict.met && !repeat;
         if (verdict.error && !patternError) patternError = verdict.error;
 
@@ -353,7 +358,8 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
             watch, owner: row.owner_sub, observation, value, met, run,
             firedOn, firedAt: finishedAt, previousValue, failures: 0,
         });
-        const result = await settle({ watch, run, failures: 0, successAt: finishedAt, events, observation, endpoint });
+        const fired = met ? { owner: row.owner_sub, value, previousValue, observedAt: firedOn ? Number(firedOn.observed_at) : finishedAt } : null;
+        const result = await settle({ watch, run, failures: 0, successAt: finishedAt, events, observation, endpoint, fired });
         return {
             ...result, met, value, verdict: { ...verdict, met, repeat },
             observation: observation ? observations.view(observation) : null,

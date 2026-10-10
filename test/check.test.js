@@ -117,6 +117,11 @@ t('a condition that fires emits watch.watch.triggered with the observation that 
     assert.deepStrictEqual([Number(last.changed), Number(last.condition_met)], [1, 1]);
     valid('watch.observation@1', svc.observations.view(last));
     valid('watch.check-run@1', svc.check.runView((await runs(w.id)).pop()));
+
+    // While 7.50 keeps holding, the next checks do not fire again (the trail began with the run that fired).
+    const again = await check(w.id);
+    assert.deepStrictEqual([again.run.triggers, again.met], [0, false], 'a condition that keeps holding fires once');
+    assert.strictEqual((await envelopes('watch.watch.triggered')).filter((e) => e.payload.watch_id === w.id).length, 1);
 });
 
 t('a failing check is a recorded state and a watch.check.failed event, and it backs off', async () => {

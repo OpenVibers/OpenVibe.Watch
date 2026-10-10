@@ -48,7 +48,7 @@ function readers(db, { startedAt }) {
     };
 }
 
-function createWatchReadiness({ db, config, registry, check, observations, scheduler, outbox, now, release = null }) {
+function createWatchReadiness({ db, config, registry, check, observations, scheduler, outbox, actions = null, now, release = null }) {
     const read = readers(db, { startedAt: now() });
     const iso = (v) => (v == null ? null : new Date(v).toISOString());
     return createReadiness({
@@ -98,6 +98,7 @@ function createWatchReadiness({ db, config, registry, check, observations, sched
                 checks_in_flight: check.inflight().length,
                 observations: dbOk ? await read.observations() : null,
                 outbox: dbOk ? await outbox.status() : null,
+                actions: dbOk && actions ? await actions.status() : null,
             };
         },
     });

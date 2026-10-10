@@ -79,6 +79,14 @@ function load(env = process.env) {
             secrets: String(env.WATCH_EVENTS_SECRET || '').split(',').map((x) => x.trim()).filter(Boolean),
         },
 
+        // Actions (server/actions.js): every WATCH_ACTIONS_TICK_MS deliver up to WATCH_ACTIONS_BATCH queued actions of fired
+        // watches. Notifications need the Network OAuth client secret (a token for network.notifications.push).
+        actions: {
+            enabled: env.WATCH_ACTIONS !== 'off',
+            tickMs: int(env.WATCH_ACTIONS_TICK_MS, 5000),
+            batch: int(env.WATCH_ACTIONS_BATCH, 20),
+        },
+
         // The check worker: every WATCH_TICK_MS, start checks for active watches whose turn has come.
         worker: {
             enabled: env.WATCH_WORKER !== 'off',

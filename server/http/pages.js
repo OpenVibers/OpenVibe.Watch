@@ -74,9 +74,8 @@ const OPS = {
 };
 const NEEDS_VALUE = new Set(['gt', 'gte', 'lt', 'lte', 'eq', 'ne', 'contains', 'matches']);
 const NOTIFY_ACTION = [{ kind: 'notification', category: 'service', priority: 'normal' }];
-// With notifications off the watch still needs an action (the contract requires one); actions are
-// step 4 of the plan and none is dispatched yet, so this records the person's intent without changing
-// what happens today (see how-it-works and the note on the form).
+// With notifications off the watch still needs an action (the contract requires one): an event, whose dispatcher is a
+// later step, so a quiet watch records its trigger and tells nobody (server/actions.js records it as unavailable).
 const QUIET_ACTION = [{ kind: 'event', event_type: 'watch.watch.triggered' }];
 
 const INT = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
@@ -92,7 +91,7 @@ function sameOrigin(req, baseUrl) {
 }
 
 function createPageRoutes(ctx) {
-    const { config, db, registry, check, observations, sessions, log = console } = ctx;
+    const { config, db, registry, check, observations, sessions, actions = null, log = console } = ctx;
     const r = express.Router();
     const formBody = express.urlencoded({ extended: false, limit: '32kb' });
 
@@ -323,10 +322,10 @@ ${extractionBlock}
 ${conditionBlock}
 <fieldset><legend>How often, and how to tell you</legend>
 ${field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
-${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'A fired condition becomes a WATCH_TRIGGERED notification through OpenVibe.Network, as today.' })}
+${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'When the condition fires you get one notification on OpenVibe (your notifications on any OpenVibe site), with the value and a link here.' })}
 </fieldset>
 <p class="form-actions"><button class="btn primary" type="submit">${submit}</button> <a href="/watches">Cancel</a></p>
-<p class="muted small">Actions are step 4 of the plan: a fired condition records its trigger and emits <code>watch.watch.triggered</code> today, and no other action is dispatched yet — turning notifications off does not silence that until actions run.</p>
+<p class="muted small">Notifications are delivered today. Events, webhooks and tasks for OpenVibe.Actor, Codes and Run are later steps: a watch that asks for one records it as not available yet.</p>
 </form>`;
     }
 
@@ -517,6 +516,7 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create 
         const latest = await observations.latest(row.id);
         const obs = await observations.list(row.id, { before: ridBefore(req.query.obs_before), limit: obsLimit(req.query.obs_limit) });
         const runs = await check.list(row.id, { before: ridBefore(req.query.checks_before), limit: obsLimit(req.query.checks_limit) });
+        const acts = actions ? await actions.recent(row.id, 10) : [];
 
         const obsRows = obs.map((o) => [
             time(new Date(Number(o.observed_at)).toISOString()),
@@ -535,6 +535,14 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create 
                 view.triggers ? 'fired' : '',
             ];
         });
+
+        const ACT_WORDS = { queued: ['waiting to send', 'info'], sent: ['sent', 'ok'], skipped: ['not sent', 'warn'], failed: ['failed', 'bad'], unavailable: ['not available yet', 'warn'] };
+        const actRows = acts.map((a) => [
+            time(a.created_at),
+            a.kind === 'notification' ? 'Notification' : html`<code>${a.kind}</code>`,
+            badge((ACT_WORDS[a.state] || [a.state])[0], (ACT_WORDS[a.state] || [null, 'info'])[1]),
+            a.error ? html`<span class="muted small">${a.error}</span>` : (a.attempts > 1 ? html`<span class="muted small">${a.attempts} attempts</span>` : ''),
+        ]);
 
         const ran = String(req.query.ran || '');
         const actionForms = html`<div class="actions">
@@ -567,6 +575,8 @@ ${actionForms}
 <section aria-labelledby="h-obs"><h2 id="h-obs">Observation history</h2>
 ${table(['When', 'Value', 'Changed', 'Condition'], obsRows, { empty: 'No observations yet. Watch records one when a check reads a value.' })}
 <nav class="pager">${nextObs ? html`<a class="btn" href="${nextObs}">Older observations</a>` : html`<span class="muted">That is every observation kept.</span>`}</nav></section>
+<section aria-labelledby="h-acts"><h2 id="h-acts">What it did when it fired</h2>
+${table(['When', 'Action', 'Result', 'Detail'], actRows, { empty: 'Nothing yet: the condition has not fired since actions began (2026-10-10).' })}</section>
 <section aria-labelledby="h-runs"><h2 id="h-runs">Check runs</h2>
 <p class="muted small">Every check, whatever it found. A skipped kind, a site error and a wait are recorded states, not silence.</p>
 ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 'No checks yet.' })}

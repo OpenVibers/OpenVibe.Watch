@@ -96,9 +96,9 @@ when checked from the site, fetching nothing.
 Check-now from the page respects the API's limits and its refusals: a second check while one runs or
 a check of a paused watch is the API's 409, said in words; a kind without a carrier is the API's 422;
 and the manual-check and write budgets (10/120 and 30/600 per person, a minute/hour) are enforced
-with a friendly page. "Notify me" stores the notification action; a fired condition still emits
-`watch.watch.triggered` through OpenVibe.Network as today (actions are step 4 and are not dispatched
-yet, which the form says on the page).
+with a friendly page. "Notify me" stores the notification action: when the condition fires the owner gets one
+notification on OpenVibe (through OpenVibe.Network), and the watch page lists what each firing did under "What it did
+when it fired".
 
 ## The watch model
 
@@ -164,8 +164,23 @@ manual `POST …/check` never overlaps a scheduled one. One check
 
 A condition that fires is recorded on the check run (`state: condition_met`, `triggers: 1`) and
 emits `watch.watch.triggered`; it fires again only for a value that is new or for a new run of
-holding, never once per check while nothing moves. **Actions are step 4 of the plan**: a fired
-condition records the trigger and emits the event, and nothing else is dispatched yet.
+holding, never once per check while nothing moves (the last firing is compared by when it finished: the holding trail
+starts at the observation the firing run recorded).
+
+## Actions
+
+A fired condition queues the watch's actions in the same transaction as the check run that fired
+(`server/actions.js`, table `action_runs`): each action once per trigger. The action worker (every
+`WATCH_ACTIONS_TICK_MS`, up to `WATCH_ACTIONS_BATCH` at a time, off with `WATCH_ACTIONS=off`) delivers them:
+
+| kind | what happens |
+|---|---|
+| `notification` | the owner gets one OpenVibe notification through OpenVibe.Network (`openvibe-sdk/notifications`, type `WATCH_TRIGGERED`): the watch's name, the value (and the value before), and a link to the watch page. A refusal retries after 1, 5 and 30 minutes, 2 and 6 hours, then `failed`; an owner Network does not know (a deleted account) is `skipped`; a person who switched the category off is Network's decision and counts as `sent`. A watch owned by an agent or a service has no one to notify (`skipped`). Needs the Network OAuth client secret and the grants `identity.subject.resolve` + `network.notifications.push` |
+| `event`, `webhook`, `actor-task`, `codes-run`, `run-job` | recorded `unavailable` (`watch.action_unavailable`): their dispatchers are later steps, and the watch page says so |
+
+Rows are claimed with a short lease (FOR UPDATE SKIP LOCKED), so two processes never deliver one row at once.
+Network keeps no idempotency record for a push, so a lost answer can repeat a notification: delivery is at least once.
+`/api/ready` reports the queue (`actions: { enabled, queued, failed, sent }`).
 
 Nothing is invented: a value the source did not state is `null`, a failed check is a recorded state,
 and the validators/body hash are stored only after a body was read successfully, so an unreadable
@@ -383,8 +398,8 @@ Called elsewhere, as the service principal `watch` (client credentials from Open
   422), cross-site writes refused, and hostile names and values escaped on every page
 
 Not yet demonstrated: a check against a real site from a deployed service (nothing is deployed
-yet), the event/webhook carriers (step 5), the Run rung (step 6), Node probes (step 7) and the
-actions (step 4) — each answers `watch.carrier_unavailable` and fetches nothing today.
+yet), the event/webhook carriers (step 5), the Run rung (step 6) and Node probes (step 7) — each answers
+`watch.carrier_unavailable` and fetches nothing today — and the action kinds beyond notifications.
 
 ## Deploy
 
