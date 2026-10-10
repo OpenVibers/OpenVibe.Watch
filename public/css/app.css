@@ -38,7 +38,7 @@ form.inline { display: inline; }
 /* ── Buttons ────────────────────────────────────────────── */
 .btn { display: inline-block; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-light, #2c3d5c); background: var(--bg-card, #131c2e); color: var(--text-primary, #e6edf7); text-decoration: none; font-size: .92rem; }
 .btn:hover { border-color: var(--accent, #3b82f6); }
-.btn.primary { background: var(--accent, #3b82f6); border-color: var(--accent, #3b82f6); color: #fff; }
+.btn.primary { background: var(--accent-strong, var(--accent, #3472d8)); border-color: var(--accent-strong, var(--accent, #3472d8)); color: var(--on-accent-strong, var(--on-accent, #fff)); }
 .btn.danger { border-color: var(--error, #ef4444); color: var(--error, #ef4444); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
 .pager { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
