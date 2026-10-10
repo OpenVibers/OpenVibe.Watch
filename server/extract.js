@@ -17,6 +17,7 @@
  * `fields` (name → path) extracts an object of several values at once, each null when it is missing.
  */
 const { toText, decodeBody } = require('./util');
+const safe = require('./safe-regex');
 
 /** Longest text value one extraction stores (a 5 MB page as `text` is a mistake, not a value). */
 const VALUE_MAX = 64 * 1024;
@@ -205,15 +206,15 @@ function parseJson(text) {
     }
 }
 
-/** '/<re>/flags' or a bare pattern → a RegExp; oversized or invalid patterns throw. */
+/** '/<re>/flags' or a bare pattern → a RegExp; an unsafe, oversized or invalid pattern throws. */
 function compileRegex(pattern) {
-    const s = String(pattern || '');
-    if (!s || s.length > 200) throw new ExtractError('unsupported', 'regex extraction needs a pattern of at most 200 characters');
-    const m = /^\/(.*)\/([gimsuy]*)$/.exec(s);
     try {
-        return m ? new RegExp(m[1], m[2].replace('g', '')) : new RegExp(s);
-    } catch {
-        throw new ExtractError('parse_error', 'selector is not a valid regular expression');
+        return safe.compile(pattern);
+    } catch (err) {
+        // An invalid pattern is a parse error; an unsafe or oversized one is one this release
+        // refuses to run (the registry already refused it when the watch was saved).
+        if (err instanceof safe.UnsafeRegexError && err.reason === 'invalid') throw new ExtractError('parse_error', err.message);
+        throw new ExtractError('unsupported', err.message);
     }
 }
 
@@ -268,10 +269,13 @@ function extract(extraction = {}, { body = null, contentType = null, document = 
             if (text == null) throw new ExtractError('parse_error', 'there is no body to extract from');
             const re = compileRegex(extraction.selector);
             // Bounded input: a watch's own pattern is compiled as-is, so it only ever runs over a
-            // window of VALUE_MAX characters (a value beyond that is not a value this service keeps).
-            const m = re.exec(text.slice(0, VALUE_MAX));
-            if (!m) return { value: null, snapshot };
-            return { value: m.length > 1 ? (m[1] === undefined ? null : m[1]) : m[0], snapshot };
+            // window of VALUE_MAX characters (a value beyond that is not a value this service keeps),
+            // and under a deadline (safe-regex): a pattern that still backtracks states no match and
+            // records why, rather than hanging the process.
+            const { match, timedOut } = safe.exec(re, text.slice(0, VALUE_MAX));
+            if (timedOut) return { value: null, snapshot, error: safe.TIMEOUT_MESSAGE };
+            if (!match) return { value: null, snapshot };
+            return { value: match.length > 1 ? (match[1] === undefined ? null : match[1]) : match[0], snapshot };
         }
         default:
             throw new ExtractError('unsupported', `extraction kind "${kind}" is not supported`);

@@ -42,7 +42,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         tokenClient,
         tokenOpts: config.oauth.clientSecret ? { tokenUrl: `${config.networkInternalUrl}/oauth/token`, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret } : null,
     });
-    const registry = createRegistry({ db, now, outbox });
+    const registry = createRegistry({ db, now, outbox, maxWatchesPerOwner: config.watches.maxPerOwner });
     const observations = createObservations({ db, now });
     // The only way out to the internet: SSRF guard (ports, private hosts, every redirect hop), byte
     // cap, one deadline, conditional GET; per-host spacing in front of every request.

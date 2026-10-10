@@ -83,6 +83,10 @@ t('an invalid body is 422 with the validator\'s detail, and nothing is written',
         [mine({ action: [] }), /watch.watch-request@1/],
         [mine({ source: { kind: 'http', url: 'http://example.org/x', headers: { cookie: 'a=b' } } }), /cookie/],
         [mine({ nope: true }), /watch.watch-request@1/],
+        // the registry's own rules the API must obey too: the cadence floor and a safe pattern
+        [mine({ cadence: { every_sec: 60 } }), /at least 900/],
+        [mine({ extraction: { kind: 'regex', selector: '(a+)+$' } }), /extraction\/selector/],
+        [mine({ condition: { op: 'matches', value: '(a+)+$' } }), /condition\/value/],
     ];
     for (const [body, re] of bad) {
         const res = await api('POST', '/api/v1/watches', { token: ME, body });
@@ -99,10 +103,10 @@ t('an invalid body is 422 with the validator\'s detail, and nothing is written',
 
 t('patch, pause, resume, delete — and another owner gets 404 for every one of them', async () => {
     const { body: { watch } } = await api('POST', '/api/v1/watches', { token: ME, body: mine() });
-    const patched = await api('PATCH', `/api/v1/watches/${watch.id}`, { token: ME, body: { name: 'renamed', cadence: { every_sec: 120 } } });
+    const patched = await api('PATCH', `/api/v1/watches/${watch.id}`, { token: ME, body: { name: 'renamed', cadence: { every_sec: 1800 } } });
     assert.strictEqual(patched.status, 200);
     assert.strictEqual(patched.body.watch.name, 'renamed');
-    assert.strictEqual(patched.body.watch.cadence.every_sec, 120);
+    assert.strictEqual(patched.body.watch.cadence.every_sec, 1800);
     assert.ok(validate('watch.watch-result@1', patched.body).valid);
 
     const paused = await api('POST', `/api/v1/watches/${watch.id}/pause`, { token: ME });

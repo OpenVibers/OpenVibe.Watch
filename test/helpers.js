@@ -175,7 +175,7 @@ function watchDef(overrides = {}) {
     return {
         name: 'Stub watch',
         source: { kind: 'http', url: 'https://example.org/page', format: null },
-        cadence: { every_sec: 60, jitter_sec: 0 },
+        cadence: { every_sec: 900, jitter_sec: 0 },
         extraction: { kind: 'text' },
         condition: { op: 'changed' },
         action: [{ kind: 'notification', category: 'service', priority: 'normal' }],

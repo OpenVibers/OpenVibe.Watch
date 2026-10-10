@@ -18,12 +18,15 @@
  * found — 404, never 403 (an id must not confirm that someone else's watch exists).
  */
 const { validate, ids: contractIds } = require('openvibe-contracts');
+const safe = require('./safe-regex');
 
 /** Source kinds that reach out on a cadence; event and webhook sources are pushed to instead. */
 const POLLING = new Set(['http', 'feed', 'api', 'node', 'run']);
 const PUSHED = new Set(['event', 'webhook']);
 const RUN_STATES = ['ok', 'not_modified', 'no_change', 'changed', 'condition_met', 'http_error', 'timeout', 'parse_error', 'rate_limited', 'budget_exceeded', 'skipped', 'disabled'];
 const STATUSES = ['active', 'paused', 'disabled', 'failed'];
+/** The shortest cadence a polling watch may state (15 minutes) — the web form's floor, enforced here for the API too. */
+const MIN_EVERY_SEC = 900;
 /** Headers the fetcher decides; a watch may never override them (SSRF and conditional-GET safety). */
 const FORBIDDEN_HEADERS = new Set(['host', 'cookie', 'connection', 'content-length', 'transfer-encoding', 'user-agent', 'accept-encoding', 'if-none-match', 'if-modified-since']);
 
@@ -75,6 +78,7 @@ function validateRequest(body, { create = false } = {}) {
         if (POLLING.has(kind)) {
             if (cadence === null || cadence === undefined) throw new RegistryError(`a ${kind} source needs a cadence (every_sec)`);
             if (!Number.isInteger(cadence.every_sec)) throw new RegistryError('cadence.every_sec is required for a source that polls');
+            if (cadence.every_sec < MIN_EVERY_SEC) throw new RegistryError(`cadence.every_sec must be at least ${MIN_EVERY_SEC} seconds (15 minutes)`);
         }
         if (PUSHED.has(kind) && cadence) throw new RegistryError(`a ${kind} source is pushed to and never polls: cadence must be null`);
         // A HEAD source states no body, so only a document/record extraction can read one: refuse
@@ -82,6 +86,17 @@ function validateRequest(body, { create = false } = {}) {
         if (body.source.method === 'HEAD' && !['json', 'jsonpath'].includes((body.extraction || {}).kind)) {
             throw new RegistryError('a HEAD source states no body: its extraction must be json or jsonpath (status, etag, last_modified, content_type, content_length)');
         }
+    }
+    // A watch's own pattern is refused when the watch is saved, not when it runs: one that would
+    // backtrack for minutes (safe-regex) must never reach the check worker through the API or the
+    // form. The names match the form's fields, so the message lands next to the input.
+    if (body.extraction && body.extraction.kind === 'regex') {
+        const bad = safe.validate(body.extraction.selector);
+        if (bad) throw new RegistryError(`/extraction/selector ${bad}`);
+    }
+    if (body.condition && body.condition.op === 'matches' && typeof body.condition.value === 'string') {
+        const bad = safe.validate(body.condition.value);
+        if (bad) throw new RegistryError(`/condition/value ${bad}`);
     }
     return body;
 }
@@ -106,9 +121,10 @@ function validateView(view) {
     return view;
 }
 
-function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null }) {
+function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, maxWatchesPerOwner = 50 }) {
     const st = {
         get: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
+        countOwned: db.prepare('SELECT COUNT(*) AS n FROM watches WHERE owner_sub = ? AND deleted_at IS NULL'),
         insert: db.prepare(`INSERT INTO watches (id, project_id, owner_sub, name, status, source, cadence, extraction, comparison, condition,
             action, budget, retention, labels, next_due_at, not_before, created_at, updated_at, updated_by)
             VALUES (@id, @project_id, @owner_sub, @name, @status, @source, @cadence, @extraction, @comparison, @condition,
@@ -219,6 +235,10 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const req = validateRequest(body, { create: true });
         const owner = ownerOf(principal);
         if (!owner) throw new RegistryError('no acting subject', 'watch.invalid');
+        // A per-owner cap, so one caller cannot fill the registry (the API and the form both come
+        // through here). The number is a config value (WATCH_MAX_PER_OWNER).
+        const owned = await st.countOwned.get(owner);
+        if (Number(owned.n) >= maxWatchesPerOwner) throw new RegistryError(`an owner may hold at most ${maxWatchesPerOwner} watches`);
         const t = now();
         const rec = {
             name: req.name || defaultName(req.source),

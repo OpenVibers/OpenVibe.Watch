@@ -14,11 +14,13 @@
  *
  * Numeric comparison refuses to guess: a value that is not a number (or a plain decimal string) is
  * never "greater than" anything, and an unknown value is never low (the same rule Deals' watches
- * use). `matches` compiles the watch's own pattern with a length cap and tests a bounded string.
+ * use). `matches` runs the watch's own pattern through safe-regex: it is bounded in length and in
+ * time, an invalid or unsafe pattern simply does not match, and a pattern that hits the deadline
+ * answers "no match" with `error` set (the check records "pattern took too long").
  */
 const { canonicalJson } = require('./util');
+const safe = require('./safe-regex');
 
-const MAX_PATTERN = 200;
 // Bounded input: the watch's own pattern only ever runs over this much text (see extract.js: a
 // value is capped at the same size), so a pathological pattern cannot scan a whole body.
 const MAX_TESTED = 65536;
@@ -58,8 +60,9 @@ function hasChanged({ comparison }, { value, previous }) {
     return !same(value, before);
 }
 
-/** The predicate alone: does the condition hold for this value? */
-function holds({ comparison, condition }, { value, previous, changed }) {
+/** The predicate alone: does the condition hold for this value? `state`, when given, records a
+ * regex that hit its deadline so the check can record the error (see evaluate). */
+function holds({ comparison, condition }, { value, previous, changed }, state = null) {
     const op = (condition && condition.op) || 'changed';
     const target = condition ? condition.value : null;
     switch (op) {
@@ -87,7 +90,7 @@ function holds({ comparison, condition }, { value, previous, changed }) {
             const b = asNumber(target);
             return a != null && b != null ? a === b : same(value, target);
         }
-        case 'ne': return !holds({ comparison, condition: { ...condition, op: 'eq' } }, { value, previous, changed });
+        case 'ne': return !holds({ comparison, condition: { ...condition, op: 'eq' } }, { value, previous, changed }, state);
         case 'contains': {
             if (typeof value === 'string') return typeof target === 'string' && value.includes(target);
             if (Array.isArray(value)) return value.some((v) => same(v, target));
@@ -96,10 +99,11 @@ function holds({ comparison, condition }, { value, previous, changed }) {
         }
         case 'matches': {
             if (typeof value !== 'string' || typeof target !== 'string') return false;
-            if (!target || target.length > MAX_PATTERN) return false;
             let re;
-            try { re = new RegExp(target); } catch { return false; }
-            return re.test(value.slice(0, MAX_TESTED));
+            try { re = safe.compile(target); } catch { return false; }   // invalid, oversize or unsafe: never matches
+            const { matched, timedOut } = safe.test(re, value.slice(0, MAX_TESTED));
+            if (timedOut && state) state.error = safe.TIMEOUT_MESSAGE;
+            return matched;
         }
         case 'exists': return !isAbsent(value);
         case 'absent': return isAbsent(value);
@@ -109,22 +113,24 @@ function holds({ comparison, condition }, { value, previous, changed }) {
 
 /**
  * evaluate({ comparison, condition }, { value, previous, heldSince, now })
- *   → { changed, holds, met, since }
+ *   → { changed, holds, met, since, error }
  *
  * `previous` is the previous observation ({ value, condition_met, observed_at }) or null;
  * `heldSince` (ms) is when the predicate began holding continuously, from the observation trail —
  * pass it from observations.heldSince(). When the predicate holds and no start is known, it starts
- * now, so a for_sec condition never fires on the first sighting.
+ * now, so a for_sec condition never fires on the first sighting. `error` is the recorded reason a
+ * `matches` pattern hit its deadline (no match was taken from it), else null.
  */
 function evaluate({ comparison = null, condition = {} } = {}, { value, previous = null, heldSince = null, now = Date.now(), changed: given } = {}) {
     // The caller may know better: a check that got a 304 or an unchanged body knows nothing changed,
     // whatever comparing the values would say.
     const changed = given === undefined ? hasChanged({ comparison }, { value, previous }) : Boolean(given);
-    const hold = holds({ comparison, condition }, { value, previous, changed });
+    const state = { error: null };
+    const hold = holds({ comparison, condition }, { value, previous, changed }, state);
     const forSec = condition && Number.isInteger(condition.for_sec) ? Math.max(0, condition.for_sec) : 0;
     const since = hold ? (heldSince != null ? heldSince : now) : null;
     const met = hold && (forSec === 0 || (since != null && now - since >= forSec * 1000));
-    return { changed, holds: hold, met, since };
+    return { changed, holds: hold, met, since, error: state.error };
 }
 
 module.exports = { evaluate, hasChanged, holds, asNumber, isAbsent };

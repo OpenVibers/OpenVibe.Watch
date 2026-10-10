@@ -13,7 +13,7 @@ let web;
 const create = async (name, overrides = {}) => await svc.registry.create({
     name,
     source: { kind: 'http', url: `${web.origin}/page`, format: null },
-    cadence: { every_sec: 60 },
+    cadence: { every_sec: 900 },
     extraction: { kind: 'text' },
     condition: { op: 'eq', value: 'nothing' },
     action: [{ kind: 'notification' }],
@@ -93,10 +93,10 @@ t('a failing watch backs off: the scheduler leaves it alone until its next due t
     const out = await svc.check.run(w.id, { trigger: 'schedule' });
     assert.strictEqual(out.run.state, 'http_error');
     const row = await svc.db.prepare('SELECT * FROM watches WHERE id = ?').get(w.id);
-    assert.strictEqual(row.next_due_at - row.last_check_at, 60000, 'first failure: every_sec · 2^0');
+    assert.strictEqual(row.next_due_at - row.last_check_at, 900000, 'first failure: every_sec · 2^0');
     let due = new Set((await svc.registry.due(50)).map(d => d.id));
     assert.ok(!due.has(w.id), 'not due until the backoff has run');
-    await dueAt(w.id, row.next_due_at - 120000);
+    await dueAt(w.id, row.next_due_at - 960000);
     due = new Set((await svc.registry.due(50)).map(d => d.id));
     assert.ok(due.has(w.id));
 });
@@ -113,7 +113,7 @@ t2('the worker checks a due watch without anyone asking', async () => {
     try {
         const w = await svc2.registry.create({
             name: 'auto', source: { kind: 'http', url: `${web2.origin}/page`, format: null },
-            cadence: { every_sec: 60 }, extraction: { kind: 'text' },
+            cadence: { every_sec: 900 }, extraction: { kind: 'text' },
             condition: { op: 'eq', value: 'nothing' }, action: [{ kind: 'notification' }],
         }, { sub: newUser() });
         // a new watch is due at once (its first reading), then armed by cadence after each check;
@@ -121,7 +121,7 @@ t2('the worker checks a due watch without anyone asking', async () => {
         await svc2.db.prepare('UPDATE watches SET next_due_at = 0 WHERE id = ?').run(w.id);
         for (let i = 0; i < 100 && (await svc2.db.prepare('SELECT COUNT(*) AS n FROM check_runs WHERE watch_id = ?').get(w.id)).n === 0; i++) await sleep(50);
         const runs = await svc2.db.prepare('SELECT * FROM check_runs WHERE watch_id = ?').all(w.id);
-        assert.strictEqual(runs.length, 1, 'the scheduler ran exactly one check (the cadence is a minute)');
+        assert.strictEqual(runs.length, 1, 'the scheduler ran exactly one check (the cadence is 15 minutes)');
         assert.strictEqual(runs[0].trigger, 'schedule');
         assert.strictEqual(runs[0].state, 'changed');
 
