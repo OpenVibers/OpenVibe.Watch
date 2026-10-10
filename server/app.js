@@ -21,6 +21,7 @@ const { createWatchReadiness, registerWatchGauges } = require('./observability')
 const { createSso } = require('./auth/sso');
 const { createPageRoutes } = require('./http/pages');
 const { watchesRouter } = require('./api/watches');
+const { resourceIndexRouter } = require('./api/resource-index');
 const { checksRouter } = require('./api/checks');
 const { createActorLimits } = require('./api/actor-limits');
 const { assetVersion, send, setRelease, SITE_NAME, TAGLINE } = require('./render/layout');
@@ -118,6 +119,8 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
 
     // ── The API (unchanged: bearer tokens, one capability per route, problem+json) ──
     const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log });
+    // OpenVibe.Services' resource index (watch.resource.read, service tokens only): read on loopback; the public vhost 404s it.
+    app.use(resourceIndexRouter({ db, auth }));
     app.use(watchesRouter({ registry, auth, limits }));
     app.use(checksRouter({ registry, check, observations, auth, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'watch.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
