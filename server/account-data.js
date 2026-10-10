@@ -31,6 +31,7 @@ async function extraErase(t, subjects, counts) {
     const mine = '(SELECT id FROM watches WHERE owner_sub = ANY($1::text[]))';
     counts.add(counts.erased, 'observations', await t.exec(`DELETE FROM observations WHERE watch_id IN ${mine}`, [subjects]));
     counts.add(counts.erased, 'check_runs', await t.exec(`DELETE FROM check_runs WHERE watch_id IN ${mine}`, [subjects]));
+    counts.add(counts.erased, 'action_runs', await t.exec(`DELETE FROM action_runs WHERE watch_id IN ${mine}`, [subjects]));
     counts.add(counts.erased, 'watch_endpoint_state', await t.exec(`DELETE FROM watch_endpoint_state WHERE watch_id IN ${mine}`, [subjects]));
     counts.add(counts.erased, 'watches', await t.exec('DELETE FROM watches WHERE owner_sub = ANY($1::text[])', [subjects]));
 }
