@@ -89,7 +89,7 @@ every page and every form, never 403. A signed-in write must also come from this
 The cadence is a select (15 minutes, 1 hour, 6 hours, 1 day); 15 minutes is the shortest a person may
 choose here (the contract's floor is 30 seconds, for a service). A validation error re-renders the
 form with the person's own input and the registry's own message next to the field it names. The
-kinds whose carrier does not exist yet (webhook, run, node) and the `ai` extraction are **not
+kinds whose carrier does not exist yet (run, node) and the push kinds (event, webhook) and the `ai` extraction are **not
 offered** — and a watch of such a kind created through the API still answers `watch.carrier_unavailable`
 when checked from the site, fetching nothing. An event watch (made through the API) is checked when its event
 arrives, so Check now answers `watch.event_awaited`.
@@ -130,7 +130,7 @@ This release carries the pull rungs and event sources:
 | `feed` | RSS 2.0 / RSS 1.0 (RDF) / Atom 1.0 → `{ items, latest, count }` | implemented |
 | `api` | JSON/XML with `items_path` + `fields`, or the body itself | implemented |
 | `event` | delivered by OpenVibe.Events (see [Event sources](#event-sources)) | implemented |
-| `webhook` | delivered to `/internal/hooks/…` | step 5 |
+| `webhook` | a signed POST to `/hooks/<watch id>` (see [Webhook sources](#webhook-sources)) | implemented |
 | `run` | browser/code polling through OpenVibe.Run | step 6 |
 | `node` | a probe through OpenVibe.Node | step 7 |
 
@@ -162,6 +162,28 @@ nothing while nothing happens (`server/event-sources.js`, `server/carriers/event
   re-enables one a watch needs again, and disables the ones no watch needs. It never touches the account
   subscriptions or another endpoint's. It is off without `EVENTS_URL`, the secret or the OAuth client secret.
 - **Check now** on an event watch answers 422 `watch.event_awaited`: there is no event to read.
+
+## Webhook sources
+
+A watch whose source is `{ "kind": "webhook" }` (and `cadence: null`) is woken by a POST to
+`https://openvibe.watch/hooks/<watch id>` from anything that can call a webhook: GitHub, a CI, a store, another OpenVibe
+product (`server/webhook-sources.js`, `server/carriers/webhook.js`).
+
+- **The address is the watch's own.** Its stored endpoint is `/internal/hooks/<watch id>` (the form `watch.watch@1`
+  names), whatever a caller sent, so a watch can never point at another watch's address.
+- **The secret is shown once.** Creating the watch answers `{ watch, webhook: { url, secret } }`. The secret
+  (`whk_…`) is never shown again; `POST /api/v1/watches/:id/webhook-secret` replaces it (the old one stops working at
+  once). It is kept in full because checking a signature needs it (`webhook_secrets`), and it goes with its watch:
+  deleting the watch or the account removes it.
+- **Signing.** `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the exact body with the secret>` (GitHub's form), or
+  `Authorization: Bearer <secret>` for a sender that cannot sign. Compared in constant time.
+- **What the extraction reads.** A JSON delivery is parsed and becomes the document (`value_path: "order.total"`); any
+  other is read as text (`text`, `regex`). A delivery that says JSON but is not records `parse_error`.
+- **Answers.** 200 `{ watch_id, state, triggered }` after the check. 401 for a missing or wrong signature. 404 for an
+  unknown address or a watch that is not a webhook watch. 409 for a paused watch. 413 over 256 KB. 429 with
+  `Retry-After` over `WATCH_WEBHOOK_MAX_PER_HOUR` (60) deliveries an hour. 503 with `Retry-After: 1` while the watch's
+  previous check still runs.
+- **Check now** on a webhook watch answers 422 `watch.webhook_awaited`: there is no delivery to read.
 
 ## A check
 
@@ -260,7 +282,7 @@ an app or module may not.
 | Capability | Routes |
 |---|---|
 | `watch.watch.read` | `GET /api/v1/watches?status=&project_id=&before=&limit=`, `GET /api/v1/watches/:id` |
-| `watch.watch.manage` | `POST /api/v1/watches`, `PATCH /api/v1/watches/:id`, `POST /api/v1/watches/:id/pause`, `POST /api/v1/watches/:id/resume`, `DELETE /api/v1/watches/:id` |
+| `watch.watch.manage` | `POST /api/v1/watches`, `PATCH /api/v1/watches/:id`, `POST /api/v1/watches/:id/pause`, `POST /api/v1/watches/:id/resume`, `POST /api/v1/watches/:id/webhook-secret`, `DELETE /api/v1/watches/:id` |
 | `watch.observation.read` | `GET /api/v1/watches/:id/observations?before=&limit=`, `GET /api/v1/watches/:id/checks?before=&limit=` |
 | `watch.check.run` | `POST /api/v1/watches/:id/check` (404 unknown, 409 `watch.busy` while one runs, 409 `watch.disabled` for a paused watch, 422 `watch.carrier_unavailable`, or 422 `watch.event_awaited` for an event source) |
 | `watch.resource.read` | `GET /api/v1/resources?project=&kind=&cursor=&limit=`, `GET /api/v1/resources/:ovrn` (first-party service token only) |
@@ -434,10 +456,11 @@ Called elsewhere, as the service principal `watch` (client credentials from Open
   422), cross-site writes refused, and hostile names and values escaped on every page
 
 Not yet demonstrated: a check against a real site from a deployed service (nothing is deployed
-yet), the webhook carrier (step 5), the Run rung (step 6) and Node probes (step 7) — each answers
-`watch.carrier_unavailable` and fetches nothing today — and the action kinds beyond notifications. Event sources are
-covered end to end by `test/event-sources.test.js` (matching, visibility, once per event, the budget, the signed route
-and the subscription sync against a stand-in Events).
+yet), the Run rung (step 6) and Node probes (step 7) — each answers `watch.carrier_unavailable` and fetches nothing
+today — and the action kinds beyond notifications. Event sources are covered end to end by
+`test/event-sources.test.js` (matching, visibility, once per event, the budget, the signed route and the subscription
+sync against a stand-in Events), and webhook sources by `test/webhook-sources.test.js` (the secret shown once, both
+signing forms, every refusal, the budget, rotation, text and JSON bodies, and removal).
 
 ## Deploy
 

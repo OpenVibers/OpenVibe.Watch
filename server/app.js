@@ -58,7 +58,7 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
     + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null }) {
+function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy != null ? config.trustProxy : 'loopback');
@@ -87,6 +87,9 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
         // Every other event type is an event source's (plan T18 step 5, server/event-sources.js).
         app.post('/internal/events', accountData.consumer({ secrets: config.events.secrets || [], send, log, onEvent: eventSources ? eventSources.onEvent : null }));
     }
+    // Webhook sources (plan T18 step 5, server/webhook-sources.js): public, signed with the watch's own secret, read raw
+    // (the signature covers the exact bytes), so no body parser runs before it.
+    if (webhookSources) app.post('/hooks/:id', (req, res) => { webhookSources.receive(req, res).catch((err) => { log.error(`[webhook-sources] ${err.message}`); if (!res.headersSent) res.status(500).end(); }); });
     app.use('/api', express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] }));
 
     app.get('/api/health', (_req, res) => {
@@ -122,7 +125,7 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log });
     // OpenVibe.Services' resource index (watch.resource.read, service tokens only): read on loopback; the public vhost 404s it.
     app.use(resourceIndexRouter({ db, auth }));
-    app.use(watchesRouter({ registry, auth, limits }));
+    app.use(watchesRouter({ registry, auth, limits, webhookSources }));
     app.use(checksRouter({ registry, check, observations, auth, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'watch.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
 

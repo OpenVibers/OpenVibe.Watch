@@ -186,9 +186,8 @@ t('a pattern that hits its deadline is a recorded check error, never a hang', as
     price = '19.99';
 });
 
-t('a webhook, node or run source is accepted but never fetched (steps 5-7); an event source waits for its event', async () => {
+t('a node or run source is accepted but never fetched (steps 6-7); event and webhook sources wait to be pushed to', async () => {
     const cases = [
-        ['webhook', { kind: 'webhook', endpoint: '/internal/hooks/abc' }, { op: 'exists' }],
         ['node', { kind: 'node', node_id: 'nod_01J0000000000000000000000', probe: { path: '/tmp/x' } }, { op: 'exists' }],
         ['run', { kind: 'run', runtime: 'browser', url: `${web.origin}/price`, steps: [{ goto: 'https://example.org' }] }, { op: 'exists' }],
     ];
@@ -196,14 +195,14 @@ t('a webhook, node or run source is accepted but never fetched (steps 5-7); an e
     for (const [kind, source, condition] of cases) {
         // an event or a webhook is pushed to and never polls; node and run sources poll through
         // OpenVibe.Node and OpenVibe.Run, so they carry a cadence — and still nothing is fetched
-        const cadence = (kind === 'event' || kind === 'webhook') ? null : { every_sec: 900 };
+        const cadence = { every_sec: 900 };
         const w = await create(person, { source, cadence, extraction: { kind: 'text' }, condition });
         assert.strictEqual((await row(w.id)).status, 'active');
         const out = await check(w.id, 'manual');
         assert.strictEqual(out.run.state, 'skipped', `${kind}: ${out.run.detail}`);
         assert.strictEqual(out.run.error_code, 'watch.carrier_unavailable');
         assert.strictEqual(out.run.carrier, kind);
-        assert.match(out.run.detail, /step [567]/);
+        assert.match(out.run.detail, /step [67]/);
         assert.strictEqual(out.unavailable.code, 'watch.carrier_unavailable');
         assert.strictEqual((await observations(w.id)).length, 0);
         const [fail] = (await payloads('watch.check.failed')).slice(-1);

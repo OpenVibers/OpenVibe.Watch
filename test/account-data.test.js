@@ -68,12 +68,16 @@ t('the export carries the person\'s watches and no session', async () => {
 
 t('the deletion removes the person\'s watches with their checks and observations, and their sessions; once', async () => {
     const event = ev('evt_01JZ0000000000000000000D01', 'network.account.deleted', { deletion_id: 'del_01JZ0000000000000000000DE1', subject: me });
+    // A webhook secret hanging under the person's watch goes with it (server/webhook-sources.js).
+    const mineId = await svc.db.value('SELECT id FROM watches WHERE owner_sub = $1', [me]);
+    await svc.db.prepare('INSERT INTO webhook_secrets (watch_id, secret, created_at) VALUES (?, ?, ?)').run(mineId, 'whk_test', Date.now());
     const r = await deliver(event);
     assert.deepStrictEqual([r.status, r.json.outcome], [200, 'erased'], JSON.stringify(r.json));
     assert.strictEqual(await count('SELECT count(*) FROM watches WHERE owner_sub = $1', [me]), 0);
     assert.strictEqual(await count('SELECT count(*) FROM web_sessions WHERE subject = $1', [me]), 0);
     assert.strictEqual(await count('SELECT count(*) FROM check_runs WHERE watch_id NOT IN (SELECT id FROM watches)'), 0, 'no orphaned check runs');
     assert.strictEqual(await count('SELECT count(*) FROM observations WHERE watch_id NOT IN (SELECT id FROM watches)'), 0, 'no orphaned observations');
+    assert.strictEqual(await count('SELECT count(*) FROM webhook_secrets WHERE watch_id NOT IN (SELECT id FROM watches)'), 0, 'no orphaned webhook secret');
     assert.strictEqual(await count('SELECT count(*) FROM watches WHERE owner_sub = $1', [other]), 1, 'someone else\'s watch stays');
     const conf = stub.calls.filter((c) => c.url === '/internal/account-deletions/del_01JZ0000000000000000000DE1/confirmations');
     assert.strictEqual(conf.length, 1);
