@@ -8,7 +8,7 @@
   "port": 4730,
   "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
   "contracts": "openvibe-contracts v0.129.0",
-  "sdk": "openvibe-sdk v0.42.0",
+  "sdk": "openvibe-sdk v0.43.0",
   "shared": "openvibe-shared v3.0.1",
   "capabilities": [
     "watch.watch.read",
@@ -72,5 +72,5 @@
     "per-actor limits (openvibe-sdk/limits)",
     "the public site: Network sign-in (PKCE S256, web_sessions with only the token hash), server-rendered pages complete without JavaScript, the four create templates, watch management, observation history and check runs, how-it-works and the changelog, robots/sitemap/llms.txt"
   ],
-  "updated": "2026-10-10"
+  "updated": "2026-10-11"
 }
