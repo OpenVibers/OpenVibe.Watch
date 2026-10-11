@@ -1,6 +1,6 @@
 # OpenVibe.Watch
 
-> Persistent, user-defined observations and conditions over pages, feeds and APIs: define what to
+> Persistent, user-defined observations and conditions over pages, feeds, APIs, webhooks and OpenVibe events: define what to
 > watch, get told when it changes or fires — cheaply, because a Watch never polls when an event or
 > the site's own ETag will do.
 

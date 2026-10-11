@@ -32,7 +32,7 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 /** The text index non-HTML clients get for `/`; the site itself is at the same address for browsers. */
 const TEXT_INDEX = [
-    'OpenVibe.Watch: persistent user-defined observations and conditions over pages, feeds and APIs.',
+    'OpenVibe.Watch: persistent user-defined observations and conditions over pages, feeds, APIs, webhooks and OpenVibe events.',
     'A watch states what it observes (source), how often or what pushes to it (cadence / event pattern),',
     'what value it takes (extraction), how that value is compared and when the condition fires, and what',
     'it wakes. A watch never polls when an event or a webhook will do, and it never fabricates a value:',
