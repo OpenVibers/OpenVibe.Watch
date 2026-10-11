@@ -357,6 +357,48 @@ t('discovery files describe the site and keep the person pages out of the sitema
     assert.match(llms.text, /OpenVibe\.Watch/);
 });
 
+t('the webhook template: no address to give, the address and secret shown once, a new secret, deliveries, edit', async () => {
+    const form = await svc.get('/watches/new?template=webhook', { cookie: session });
+    assert.strictEqual(form.status, 200);
+    assert.ok(form.text.includes('name="template" value="webhook"') && !form.text.includes('name="url"'), 'no address field');
+    assert.ok(!form.text.includes('name="cadence"'), 'no cadence: it is pushed to');
+    const made = await create({ template: 'webhook', name: 'Releases', value_path: 'release.tag_name', op: 'changed', notify: 'on' });
+    assert.strictEqual(made.status, 201, made.text.slice(0, 300));
+    assert.strictEqual(made.headers.get('cache-control'), 'no-store', 'the secret page is never cached');
+    const id = (made.text.match(/\/watches\/(wch_[0-9A-HJKMNP-TV-Z]{26})/) || [])[1];
+    const secret = (made.text.match(/whk_[A-Za-z0-9_-]{43}/) || [])[0];
+    assert.ok(id && secret, 'the page shows the watch and its secret');
+    assert.ok(made.text.includes(`/hooks/${id}`));
+    const watchPage = await svc.get(`/watches/${id}`, { cookie: session });
+    assert.ok(watchPage.text.includes(`/hooks/${id}`) && !watchPage.text.includes(secret), 'the address, never the secret');
+    assert.ok(watchPage.text.includes('when a delivery arrives'));
+    assert.match(watchPage.text, /the value at <code>release\.tag_name<\/code> in a webhook delivery/);
+    // A delivery wakes it.
+    const body = JSON.stringify({ release: { tag_name: 'v1.0.0' } });
+    const res = await fetch(`${svc.base}/hooks/${id}`, { method: 'POST', body, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` } });
+    assert.strictEqual((await res.json()).triggered, true);
+    // Check now has nothing to read.
+    const now = await svc.get(`/watches/${id}/check`, { cookie: session, form: {} });
+    assert.strictEqual(now.status, 422);
+    assert.match(now.text, /signed delivery/);
+    // A new secret replaces the old one at once.
+    const rotated = await svc.get(`/watches/${id}/webhook-secret`, { cookie: session, form: {} });
+    assert.strictEqual(rotated.status, 200);
+    const fresh = (rotated.text.match(/whk_[A-Za-z0-9_-]{43}/) || [])[0];
+    assert.ok(fresh && fresh !== secret);
+    const old = await fetch(`${svc.base}/hooks/${id}`, { method: 'POST', body, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` } });
+    assert.strictEqual(old.status, 401);
+    assert.strictEqual((await svc.get(`/watches/${id}/webhook-secret`, { cookie: session, form: {}, origin: 'https://evil.example' })).status, 403);
+    // The edit form keeps it a webhook watch.
+    const editForm = await svc.get(`/watches/${id}/edit`, { cookie: session });
+    assert.ok(editForm.text.includes('name="template" value="webhook"') && editForm.text.includes('value="release.tag_name"'));
+    const saved = await svc.get(`/watches/${id}/edit`, { cookie: session, form: { template: 'webhook', name: 'Releases', value_path: 'release.name', op: 'changed', notify: 'on' } });
+    assert.strictEqual(saved.status, 303, saved.text.slice(0, 300));
+    const view = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: ME });
+    assert.deepStrictEqual(view.body.watch.source, { kind: 'webhook', endpoint: `/internal/hooks/${id}` });
+    assert.deepStrictEqual(view.body.watch.extraction, { kind: 'json', value_path: 'release.name' });
+});
+
 t('done', async () => { await web.close(); await svc.stop(); });
 
 t.run();

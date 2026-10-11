@@ -66,6 +66,16 @@ const TEMPLATES = {
         defaultOp: 'lt',
         extraction: 'json',
     },
+    webhook: {
+        card: 'A webhook arrives',
+        cardBlurb: 'Get an address for anything that can call a webhook (GitHub, a store, a CI) and fire on what it sends: nothing is polled.',
+        title: 'Watch for a webhook',
+        kind: 'webhook',
+        kindWords: 'a webhook delivery',
+        ops: ['changed', 'exists', 'eq', 'ne', 'contains', 'matches', 'gt', 'gte', 'lt', 'lte'],
+        defaultOp: 'changed',
+        extraction: 'json',
+    },
 };
 const TEMPLATE_NAMES = Object.keys(TEMPLATES);
 const OPS = {
@@ -91,7 +101,7 @@ function sameOrigin(req, baseUrl) {
 }
 
 function createPageRoutes(ctx) {
-    const { config, db, registry, check, observations, sessions, actions = null, log = console } = ctx;
+    const { config, db, registry, check, observations, sessions, actions = null, log = console } = ctx;   // ctx.webhookSources: the webhook template
     const r = express.Router();
     const formBody = express.urlencoded({ extended: false, limit: '32kb' });
 
@@ -128,6 +138,7 @@ function createPageRoutes(ctx) {
     /** Which template an existing watch most resembles, so the edit form shows its fields. */
     function templateOf(watch) {
         const kind = watch.source && watch.source.kind;
+        if (kind === 'webhook') return 'webhook';
         if (kind === 'feed') return 'feed';
         if (kind === 'api') return 'json';
         const e = watch.extraction || {};
@@ -187,6 +198,24 @@ function createPageRoutes(ctx) {
     function buildBody(fields, template) {
         const t = TEMPLATES[template];
         const errors = {};
+        // A webhook watch has no address to fetch and no cadence: it is pushed to (server/webhook-sources.js).
+        if (template === 'webhook') {
+            const name = String(fields.name == null ? '' : fields.name).trim();
+            if (name.length > 120) errors.name = 'A name can be at most 120 characters.';
+            const valuePath = String(fields.value_path || '').trim();
+            const c = conditionFrom(fields, template);
+            if (c.error) errors[c.field || 'op'] = c.error;
+            if (Object.keys(errors).length) return { errors };
+            const body = {
+                source: { kind: 'webhook' },
+                cadence: null,
+                extraction: valuePath ? { kind: 'json', value_path: valuePath } : { kind: 'text' },
+                condition: c.condition,
+                action: fields.notify === 'on' ? NOTIFY_ACTION : QUIET_ACTION,
+            };
+            if (name) body.name = name;
+            return { body };
+        }
         const url = String(fields.url == null ? '' : fields.url).trim();
         if (!url) errors.url = 'Give the address of the page, feed or API to watch.';
         else if (!/^https?:\/\/\S+$/i.test(url)) errors.url = 'The address must start with http:// or https://.';
@@ -292,7 +321,11 @@ ${(template === 'price' || template === 'json') ? field('Hold for (seconds)', ht
 </fieldset>`;
 
         let extractionBlock;
-        if (template === 'page') {
+        if (template === 'webhook') {
+            extractionBlock = html`<fieldset><legend>What should it read?</legend>
+${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="value_path" value="${fields.value_path}" maxlength="200" placeholder="e.g. action, release.tag_name, order.total">`, { name: 'value_path', error: errors.value_path, hint: 'A dot path into a JSON delivery. Leave it blank to read the whole delivery as text (it works for any sender).' })}
+</fieldset>`;
+        } else if (template === 'page') {
             extractionBlock = html`<fieldset><legend>What should it read?</legend>
 ${field('CSS selector', html`<input type="text" id="${idOf('selector')}" name="selector" value="${fields.selector}" maxlength="300" placeholder="e.g. .price (blank: the whole page text)">`, { name: 'selector', error: errors.selector, hint: 'The text of the first element matching this selector. Leave it blank to read the whole page text.' })}
 </fieldset>`;
@@ -311,17 +344,24 @@ ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="v
 </fieldset>`;
         }
 
+        const pushed = template === 'webhook';
+        const whatBlock = pushed
+            ? html`<fieldset><legend>What to watch</legend>
+${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. New releases of my project">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch calls it a webhook watch.' })}
+<p class="muted small">There is no address to give: when you save it, Watch shows this watch’s own webhook address and its secret, once. Put both in the sender’s webhook settings.</p>
+</fieldset>`
+            : html`<fieldset><legend>What to watch</legend>
+${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. Laptop price at the usual shop">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the address.' })}
+${field('Address', html`<input type="url" id="${idOf('url')}" name="url" value="${fields.url}" maxlength="2000" required placeholder="https://…">`, { name: 'url', error: errors.url, hint: html`This is ${t.kindWords}, fetched with the site’s own ETag/Last-Modified when it gives one.` })}
+</fieldset>`;
         return html`<form class="watch-form" method="post" action="${action}">
 <input type="hidden" name="template" value="${template}">
 <input type="hidden" name="kind" value="${t.kind}">
-<fieldset><legend>What to watch</legend>
-${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. Laptop price at the usual shop">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the address.' })}
-${field('Address', html`<input type="url" id="${idOf('url')}" name="url" value="${fields.url}" maxlength="2000" required placeholder="https://…">`, { name: 'url', error: errors.url, hint: html`This is ${t.kindWords}, fetched with the site’s own ETag/Last-Modified when it gives one.` })}
-</fieldset>
+${whatBlock}
 ${extractionBlock}
 ${conditionBlock}
-<fieldset><legend>How often, and how to tell you</legend>
-${field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
+<fieldset><legend>${pushed ? 'How to tell you' : 'How often, and how to tell you'}</legend>
+${pushed ? html`<p class="muted small">Checked each time a signed delivery arrives (at most 60 an hour), never on a cadence.</p>` : field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
 ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'When the condition fires you get one notification on OpenVibe (your notifications on any OpenVibe site), with the value and a link here.' })}
 </fieldset>
 <p class="form-actions"><button class="btn primary" type="submit">${submit}</button> <a href="/watches">Cancel</a></p>
@@ -351,16 +391,16 @@ ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify =
             ? `You have ${summary.total} watch${summary.total === 1 ? '' : 'es'}: ${summary.active} active, ${summary.paused} paused, ${summary.failed} failing.`
             : null;
         const hero = showcase.hero({
-            eyebrow: 'OpenVibe.Watch · pages, feeds and APIs',
+            eyebrow: 'OpenVibe.Watch · pages, feeds, APIs and webhooks',
             title: 'Know the moment it changes.',
             accent: 'Checked politely, never guessed.',
-            lede: 'Give Watch a page, a feed or a JSON API, say which value you care about and when to tell you. It checks on the cadence you pick, records what every check found, and tells you when your condition fires.',
+            lede: 'Give Watch a page, a feed or a JSON API (or let a webhook call it), say which value you care about and when to tell you. It checks on the cadence you pick or the moment a webhook arrives, records what every check found, and tells you when your condition fires.',
             actions: signedIn(req)
                 ? [{ label: 'New watch', href: '/watches/new?template=page', primary: true }, { label: 'Your watches', href: '/watches' }]
                 : [{ label: 'Sign in to start', href: '/auth/login?next=%2Fwatches%2Fnew%3Ftemplate%3Dpage', primary: true }, { label: 'How it checks', href: '#h-check' }],
             note: yours || 'Free while it is in alpha. Reading this page needs no account.',
         });
-        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json' };
+        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json', webhook: 'ov:code' };
         page(req, res, {
             index: true,
             cache: signedIn(req) ? null : cache.htmlHeaders({ maxAge: 300 }),
@@ -374,7 +414,7 @@ ${raw(showcase.features({
                 lede: 'Each opens the form filled in for that kind of watch; change anything before you save it.',
                 items: TEMPLATE_NAMES.map((n) => ({ icon: ICONS[n] || 'ov:bell', title: TEMPLATES[n].card, text: TEMPLATES[n].cardBlurb, href: `/watches/new?template=${n}` })),
             }))}
-<p class="muted small watch-later">Pages, feeds and APIs today. Events, webhooks, browser checks through Run, Node probes and AI readings come later, and are not offered until Watch can really check them.</p>
+<p class="muted small watch-later">Pages, feeds, APIs and webhooks today; watches woken by OpenVibe events are made through the API. Browser checks through Run, Node probes and AI readings come later, and are not offered until Watch can really check them.</p>
 ${raw(showcase.steps({
                 id: 'steps',
                 title: 'From a URL to a notification',
@@ -476,6 +516,7 @@ ${watchForm({ template, fields: { ...blankFields(template), url: String(req.quer
         if (!errors) {
             try {
                 const row = await registry.create(built.body, principalOf(req));
+                if (template === 'webhook' && ctx.webhookSources) return secretPage(req, res, registry.view(row), await ctx.webhookSources.issue(row.id), 201);
                 return res.redirect(303, `/watches/${row.id}`);
             } catch (err) {
                 if (!(err instanceof RegistryError)) throw err;
@@ -564,8 +605,10 @@ ${v.status === 'active'
 ${ran ? notice(html`The check ran: <strong>${W.stateWords(ran)}</strong>.`, ran === 'changed' || ran === 'condition_met' ? 'ok' : 'info') : ''}
 <dl class="facts">
 <dt>Status</dt><dd>${badge(W.statusWords(v.status), W.statusKind(v.status))}</dd>
-<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || '(none)'}</code></dd>
-<dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : 'not polled'}</dd>
+${v.source.kind === 'webhook'
+                ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">The secret was shown once, when the watch was made. A new one replaces it at once.</span></dd>`
+                : html`<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>`}
+<dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : (v.source.kind === 'webhook' ? 'when a delivery arrives' : (v.source.kind === 'event' ? 'when its event arrives' : 'not polled'))}</dd>
 <dt>Last check</dt><dd>${v.health.last_check_at ? html`${time(v.health.last_check_at)} — ${W.stateWords(v.health.last_state)}` : html`<span class="muted">not checked yet</span>`}</dd>
 <dt>Next due</dt><dd>${v.health.next_due_at ? time(v.health.next_due_at) : html`<span class="muted">—</span>`}</dd>
 ${v.health.consecutive_failures ? html`<dt>Failing</dt><dd>${v.health.consecutive_failures} check(s) in a row</dd>` : ''}
@@ -643,6 +686,41 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         if (out.unavailable) return detailNotice(req, res, row, 422, out.unavailable.detail);
         return res.redirect(303, `/watches/${row.id}?ran=${encodeURIComponent(out.run ? out.run.state : '')}`);
     });
+
+    // A new secret for a webhook watch: the old one stops working at once, and the new one is shown this once.
+    r.post('/watches/:id/webhook-secret', formBody, async (req, res) => {
+        if (!signedIn(req)) return res.redirect(303, '/auth/login?next=%2Fwatches');
+        if (!sameOrigin(req, config.baseUrl)) return crossSite(req, res, 'Changing the secret of');
+        if (!actionLimit(req, res, 'watch.write')) return;
+        const row = await owned(req, res);
+        if (!row) return notFoundPage(req, res);
+        const v = registry.view(row);
+        if (v.source.kind !== 'webhook' || !ctx.webhookSources) return detailNotice(req, res, row, 409, 'Only a webhook watch has a secret.');
+        return secretPage(req, res, v, await ctx.webhookSources.issue(row.id), 200);
+    });
+
+    /** The address and secret of a webhook watch, shown once: no cache, no index, and never again after this page. */
+    function secretPage(req, res, v, hook, status) {
+        res.set('Cache-Control', 'no-store');
+        res.set('Referrer-Policy', 'no-referrer');
+        return page(req, res, {
+            title: `${v.name}: webhook address`, private: true, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name, href: `/watches/${v.id}` }],
+            body: html`<h1>Your webhook is ready</h1>
+${notice('Copy the secret now: it is not shown again. Making a new one replaces it.', 'warn')}
+<dl class="facts">
+<dt>Address</dt><dd><code class="copyable">${hook.url}</code></dd>
+<dt>Secret</dt><dd><code class="copyable">${hook.secret}</code></dd>
+</dl>
+<h2>In the sender</h2>
+<ul class="facts">
+<li><strong>GitHub and most services:</strong> paste the address as the payload URL, choose <code>application/json</code>, and paste the secret as the secret. They sign each delivery with <code>X-Hub-Signature-256</code>.</li>
+<li><strong>A sender that cannot sign:</strong> send the secret as <code>Authorization: Bearer &lt;secret&gt;</code>.</li>
+<li><strong>Try it:</strong> <code>curl -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer ${hook.secret}' -d '{"hello":"watch"}' ${hook.url}</code></li>
+</ul>
+<p>${W.inWords(v)}</p>
+<p><a class="btn primary" href="/watches/${v.id}">Go to the watch</a></p>`,
+        }, status);
+    }
 
     /** Render the watch page with one notice, without a redirect (the API's 409s and 422). */
     async function detailNotice(req, res, row, status, text) {
