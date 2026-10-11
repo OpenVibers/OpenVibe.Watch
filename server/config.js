@@ -86,6 +86,10 @@ function load(env = process.env) {
             maxPerWatchPerHour: int(env.WATCH_EVENT_MAX_PER_HOUR, 60),
             syncMs: int(env.WATCH_EVENT_SYNC_MS, 10 * 60_000),
         },
+        // Webhook sources (server/webhook-sources.js): at most WATCH_WEBHOOK_MAX_PER_HOUR deliveries wake one watch.
+        webhookSources: {
+            maxPerWatchPerHour: int(env.WATCH_WEBHOOK_MAX_PER_HOUR, 60),
+        },
 
         // Actions (server/actions.js): every WATCH_ACTIONS_TICK_MS deliver up to WATCH_ACTIONS_BATCH queued actions of fired
         // watches. Notifications need the Network OAuth client secret (a token for network.notifications.push).

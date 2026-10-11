@@ -254,10 +254,13 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const owned = await st.countOwned.get(owner);
         if (Number(owned.n) >= maxWatchesPerOwner) throw new RegistryError(`an owner may hold at most ${maxWatchesPerOwner} watches`);
         const t = now();
+        const id = `wch_${ids.ulid(t)}`;
+        // A webhook watch's address is its own (server/webhook-sources.js): whatever endpoint a caller named is replaced.
+        const sourceOf = (s) => (s && s.kind === 'webhook' ? { kind: 'webhook', endpoint: `/internal/hooks/${id}` } : s);
         const rec = {
             name: req.name || defaultName(req.source),
             status: req.status || 'active',
-            source: req.source,
+            source: sourceOf(req.source),
             cadence: req.cadence == null ? null : req.cadence,
             extraction: req.extraction,
             comparison: req.comparison == null ? null : req.comparison,
@@ -268,7 +271,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             labels: req.labels || {},
         };
         const row = {
-            id: `wch_${ids.ulid(t)}`,
+            id,
             project_id: null,
             owner_sub: owner,
             name: rec.name,
@@ -304,6 +307,8 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (!row) return null;
         if (!changes || typeof changes !== 'object' || Array.isArray(changes)) throw new RegistryError('body must be a watch object');
         const current = fromRow(row);
+        // A webhook source always answers at this watch's own address, never another's.
+        if (changes.source && changes.source.kind === 'webhook') changes = { ...changes, source: { kind: 'webhook', endpoint: `/internal/hooks/${row.id}` } };
         const merged = { ...current, ...changes };
         delete merged.id;      // an id never changes
         delete merged.owner;   // ownership never changes (a watch is the subject's)

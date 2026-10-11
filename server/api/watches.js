@@ -22,7 +22,7 @@ const { http } = require('openvibe-contracts');
 const { CAPS } = require('../auth');
 const { RegistryError, STATUSES } = require('../registry');
 
-function watchesRouter({ registry, auth, limits }) {
+function watchesRouter({ registry, auth, limits, webhookSources = null }) {
     const router = express.Router();
     const read = [auth.requireCap(CAPS.read), limits.reads('watch.read')];
     const manage = [auth.requireCap(CAPS.manage), limits.budget('watch.write')];
@@ -64,7 +64,10 @@ function watchesRouter({ registry, auth, limits }) {
     router.post('/api/v1/watches', manage, async (req, res) => {
         try {
             const row = await registry.create(req.body, req.principal);
-            res.status(201).json({ watch: registry.view(row) });
+            const view = registry.view(row);
+            // A webhook watch's address and secret, shown this once (server/webhook-sources.js).
+            const webhook = webhookSources && view.source && view.source.kind === 'webhook' ? await webhookSources.issue(row.id) : null;
+            res.status(201).json(webhook ? { watch: view, webhook } : { watch: view });
         } catch (err) { fail(res, req, err); }
     });
 
@@ -87,10 +90,25 @@ function watchesRouter({ registry, auth, limits }) {
     router.post('/api/v1/watches/:id/pause', manage, setStatus('paused'));
     router.post('/api/v1/watches/:id/resume', manage, setStatus('active'));
 
+    // A new secret for a webhook watch (the old one stops working at once); also how a watch that became a webhook
+    // watch gets its first.
+    router.post('/api/v1/watches/:id/webhook-secret', manage, async (req, res) => {
+        try {
+            const row = await registry.get(req.params.id, req.principal);
+            if (!row) return notFound(res, req);
+            const view = registry.view(row);
+            if (!webhookSources || !view.source || view.source.kind !== 'webhook') {
+                return res.status(409).type('application/problem+json').send(JSON.stringify({ type: 'about:blank', title: 'watch.not_webhook', status: 409, code: 'watch.not_webhook', detail: 'only a webhook watch has a secret' }));
+            }
+            res.json({ watch_id: row.id, webhook: await webhookSources.issue(row.id) });
+        } catch (err) { fail(res, req, err); }
+    });
+
     router.delete('/api/v1/watches/:id', manage, async (req, res) => {
         try {
             const out = await registry.remove(req.params.id, req.principal);
             if (!out) return notFound(res, req);
+            if (webhookSources) await webhookSources.forget(out.id);
             res.json(out);
         } catch (err) { fail(res, req, err); }
     });

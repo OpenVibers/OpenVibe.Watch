@@ -176,12 +176,12 @@ t('a manual check runs one check and answers the released check-run; observation
     // a watch whose carrier is a later step answers 422 and never fetches
     const later = await api('POST', '/api/v1/watches', {
         token: ME,
-        body: mine({ source: { kind: 'webhook', endpoint: '/internal/hooks/x' }, cadence: null, extraction: { kind: 'json' } }),
+        body: mine({ source: { kind: 'node', node_id: 'nod_01J0000000000000000000000', probe: { path: '/tmp/x' } }, cadence: { every_sec: 900 }, extraction: { kind: 'json' } }),
     });
     const refused = await api('POST', `/api/v1/watches/${later.body.watch.id}/check`, { token: ME });
     assert.strictEqual(refused.status, 422);
     assert.strictEqual(refused.body.code, 'watch.carrier_unavailable');
-    assert.match(refused.body.detail, /step 5/);
+    assert.match(refused.body.detail, /step 7/);
     // a paused watch cannot be checked by hand either
     await api('POST', `/api/v1/watches/${watch.id}/pause`, { token: ME });
     const paused = await api('POST', `/api/v1/watches/${watch.id}/check`, { token: ME });

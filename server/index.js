@@ -24,6 +24,7 @@ const condition = require('./condition');   // { evaluate, hasChanged, holds, â€
 const { createCheck } = require('./check');
 const { createScheduler } = require('./scheduler');
 const { createEventSources } = require('./event-sources');
+const { createWebhookSources } = require('./webhook-sources');
 const { createServiceOutbox } = require('openvibe-sdk/events');
 const { validate } = require('openvibe-contracts');
 const { jwksClient, createServiceTokenClient } = require('openvibe-sdk/auth');
@@ -79,6 +80,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.
     const eventSources = createEventSources({ db, check, config, fetchImpl, log, now });
     registry.onEventSourceChange(() => eventSources.kick());
+    const webhookSources = createWebhookSources({ db, registry, check, config, now, log });
     const keys = jwksClient(config.jwksUrl, { fetch: fetchImpl, log });
     const auth = createAuth({ config, log });
     // The public site: sessions in Watch's own database, the Network key to verify a sign-in token
@@ -92,7 +94,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const accountSend = givenSend || (config.oauth.clientSecret
         ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
         : null);
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources });
+    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
@@ -141,7 +143,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, eventSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
+    return { config, db, registry, eventSources, webhookSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
 }
 
 /**
