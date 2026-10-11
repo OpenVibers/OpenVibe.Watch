@@ -239,6 +239,11 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         return row;
     }
 
+    // Event sources (server/event-sources.js) re-sync their Events subscriptions when an event watch comes or goes.
+    let onEventSource = null;
+    const touchesEvents = (...sources) => sources.some((s) => s && s.kind === 'event');
+    const eventSourceChanged = () => { if (onEventSource) { try { onEventSource(); } catch { /* the periodic sync catches up */ } } };
+
     async function create(body, principal) {
         const req = validateRequest(body, { create: true });
         const owner = ownerOf(principal);
@@ -289,6 +294,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             await st.insert.run(row);
             if (outbox) await outbox.emit(envelope(watchEvent('watch.watch.created', row, owner, { name: rec.name, status: rec.status }), source, now));
         });
+        if (touchesEvents(rec.source)) eventSourceChanged();
         return await st.get.get(row.id);
     }
 
@@ -327,6 +333,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
                 await outbox.emit(envelope(watchEvent(type, row, row.owner_sub, { name: rec.name, status: rec.status, fields: touched.sort() }), source, now));
             }
         });
+        if (touchesEvents(current.source, rec.source)) eventSourceChanged();
         return await st.get.get(row.id);
     }
 
@@ -339,6 +346,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             await db.prepare('UPDATE watches SET deleted_at = ?, updated_at = ?, next_due_at = 0 WHERE id = ?').run(t, t, row.id);
             if (outbox) await outbox.emit(envelope(watchEvent('watch.watch.removed', row, row.owner_sub, { name: row.name, status: row.status }), source, now));
         });
+        if (touchesEvents(fromRow(row).source)) eventSourceChanged();
         return { id: row.id, deleted: true };
     }
 
@@ -378,7 +386,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         };
     }
 
-    return { validate: validateRequest, validateView, view, health, fromRow, create, get, all, patch, remove, due };
+    return { validate: validateRequest, validateView, view, health, fromRow, create, get, all, patch, remove, due, onEventSourceChange: (fn) => { onEventSource = fn; } };
 }
 
 module.exports = { createRegistry, validateRequest, validateView, RegistryError, defaultName, nextDue, POLLING, PUSHED, RUN_STATES, STATUSES };

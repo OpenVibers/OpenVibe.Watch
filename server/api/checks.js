@@ -10,7 +10,8 @@
  *
  * A manual check of a watch that is paused, disabled or failed is refused with 409: it is recorded
  * as `disabled` in the check runs, and nothing is fetched. A source whose carrier is a later step
- * (event, webhook, node, run) answers 422 watch.carrier_unavailable — also without fetching.
+ * (webhook, node, run) answers 422 watch.carrier_unavailable, and an event source (checked when its event arrives,
+ * server/event-sources.js) 422 watch.event_awaited — also without fetching.
  */
 const express = require('express');
 const { http } = require('openvibe-contracts');

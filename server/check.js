@@ -181,7 +181,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
 
     // ── One check ────────────────────────────────────────────────────────────────────────────
 
-    async function runOnce(row, trigger) {
+    async function runOnce(row, trigger, input = null) {
         const watch = registry.fromRow(row);
         const startedAt = now();
         const carrier = watch.source && watch.source.kind ? watch.source.kind : null;
@@ -207,7 +207,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
             return { unavailable: { code: 'watch.extraction_unavailable' }, ...out };
         }
 
-        const choice = carriers.choose(watch);
+        const choice = carriers.choose(watch, { input });
         if (choice.unavailable) {
             const out = await skip('skipped', choice.unavailable.code, choice.unavailable.detail);
             return { unavailable: choice.unavailable, ...out };
@@ -217,7 +217,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         const state = url ? (await st.endpoint.get(watch.id, url)) || {} : {};
         let out;
         try {
-            out = await choice.run({ watch, state, now });
+            out = await choice.run({ watch, state, now, input });
         } catch (err) {
             log.error(`[check] ${watch.id}: carrier ${carrier} crashed: ${err.stack || err}`);
             out = { state: 'http_error', error_code: 'internal', detail: 'the carrier failed unexpectedly' };
@@ -374,7 +374,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
      *   { unavailable: { code, detail } }     the carrier (or extraction) is a later step; nothing fetched
      *   { run, observation, met, value }      the check ran
      */
-    async function run(id, { trigger = 'schedule' } = {}) {
+    async function run(id, { trigger = 'schedule', input = null } = {}) {
         const key = String(id);
         // Claimed before the first await, so two callers racing on one watch cannot both proceed.
         if (inflight.has(key)) return { busy: true };
@@ -382,7 +382,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         try {
             const row = await registry.get(key);
             if (!row) return null;
-            return await runOnce(row, trigger);
+            return await runOnce(row, trigger, input);
         } finally {
             inflight.delete(key);
         }

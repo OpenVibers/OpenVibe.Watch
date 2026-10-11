@@ -186,9 +186,8 @@ t('a pattern that hits its deadline is a recorded check error, never a hang', as
     price = '19.99';
 });
 
-t('an event, webhook, node or run source is accepted but never fetched (steps 5-7)', async () => {
+t('a webhook, node or run source is accepted but never fetched (steps 5-7); an event source waits for its event', async () => {
     const cases = [
-        ['event', { kind: 'event', pattern: 'release.published' }, { op: 'exists' }],
         ['webhook', { kind: 'webhook', endpoint: '/internal/hooks/abc' }, { op: 'exists' }],
         ['node', { kind: 'node', node_id: 'nod_01J0000000000000000000000', probe: { path: '/tmp/x' } }, { op: 'exists' }],
         ['run', { kind: 'run', runtime: 'browser', url: `${web.origin}/price`, steps: [{ goto: 'https://example.org' }] }, { op: 'exists' }],

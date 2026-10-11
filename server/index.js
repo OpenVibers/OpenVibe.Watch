@@ -23,6 +23,7 @@ const { extract } = require('./extract');
 const condition = require('./condition');   // { evaluate, hasChanged, holds, … }
 const { createCheck } = require('./check');
 const { createScheduler } = require('./scheduler');
+const { createEventSources } = require('./event-sources');
 const { createServiceOutbox } = require('openvibe-sdk/events');
 const { validate } = require('openvibe-contracts');
 const { jwksClient, createServiceTokenClient } = require('openvibe-sdk/auth');
@@ -75,6 +76,9 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, actor: givenActor || actorTasks, now, log });
     const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions, now, log });
     const scheduler = createScheduler({ db, check, config, now, log });
+    // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.
+    const eventSources = createEventSources({ db, check, config, fetchImpl, log, now });
+    registry.onEventSourceChange(() => eventSources.kick());
     const keys = jwksClient(config.jwksUrl, { fetch: fetchImpl, log });
     const auth = createAuth({ config, log });
     // The public site: sessions in Watch's own database, the Network key to verify a sign-in token
@@ -88,7 +92,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const accountSend = givenSend || (config.oauth.clientSecret
         ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
         : null);
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend });
+    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
@@ -98,6 +102,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     actions.start();
     const pruneTimer = setInterval(async () => {
         try { await observations.prune(); } catch (err) { log.error(`[observations] prune: ${err.message}`); }
+        try { await eventSources.prune(); } catch (err) { log.error(`[event-sources] prune: ${err.message}`); }
         try { await sessions.prune(); } catch (err) { log.error(`[sessions] prune: ${err.message}`); }
     }, 3600 * 1000);
     pruneTimer.unref?.();
@@ -118,11 +123,13 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         eventsUrl: config.events.url, endpoint: `http://127.0.0.1:${config.port}/internal/events`, secret: (config.events.secrets || [])[0],
         networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl, log,
     }) : null;
+    if (listen) eventSources.start();
 
     async function close() {
         clearInterval(pruneTimer);
         clearInterval(outboxPruneTimer);
         if (subscriptions) subscriptions.stop();
+        eventSources.stop();
         keys.stop();
         await scheduler.stop();
         await actions.stop();
@@ -134,7 +141,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
+    return { config, db, registry, eventSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
 }
 
 /**

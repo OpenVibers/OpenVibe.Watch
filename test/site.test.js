@@ -293,7 +293,7 @@ t('a kind whose carrier is not built is never fetched: check-now is 422 with the
     assert.strictEqual(made.status, 201, made.text);
     const res = await svc.get(`/watches/${made.body.watch.id}/check`, { cookie: session, form: {} });
     assert.strictEqual(res.status, 422);
-    assert.match(res.text, /not checked yet|carrier/i);
+    assert.match(res.text, /event arrives|not checked yet|carrier/i, 'an event source is checked when its event arrives');
 });
 
 t('check-now is limited per person, with a friendly 429 and Retry-After', async () => {
