@@ -80,6 +80,13 @@ function load(env = process.env) {
             secrets: String(env.WATCH_EVENTS_SECRET || '').split(',').map((x) => x.trim()).filter(Boolean),
         },
 
+        // Event sources (server/event-sources.js): at most WATCH_EVENT_MAX_PER_HOUR event checks per watch, and the
+        // Events subscriptions re-synced every WATCH_EVENT_SYNC_MS (and soon after an event watch changes).
+        eventSources: {
+            maxPerWatchPerHour: int(env.WATCH_EVENT_MAX_PER_HOUR, 60),
+            syncMs: int(env.WATCH_EVENT_SYNC_MS, 10 * 60_000),
+        },
+
         // Actions (server/actions.js): every WATCH_ACTIONS_TICK_MS deliver up to WATCH_ACTIONS_BATCH queued actions of fired
         // watches. Notifications need the Network OAuth client secret (a token for network.notifications.push).
         actions: {

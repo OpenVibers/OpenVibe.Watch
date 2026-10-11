@@ -58,7 +58,7 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
     + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null }) {
+function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy != null ? config.trustProxy : 'loopback');
@@ -84,7 +84,8 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     // parser runs before it; a request that came through a proxy is refused.
     if (accountData) {
         const send = accountSend || (async () => { throw new Error('OV_OAUTH_CLIENT_SECRET is not set: Watch cannot answer account events'); });
-        app.post('/internal/events', accountData.consumer({ secrets: config.events.secrets || [], send, log }));
+        // Every other event type is an event source's (plan T18 step 5, server/event-sources.js).
+        app.post('/internal/events', accountData.consumer({ secrets: config.events.secrets || [], send, log, onEvent: eventSources ? eventSources.onEvent : null }));
     }
     app.use('/api', express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] }));
 

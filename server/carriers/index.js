@@ -9,10 +9,10 @@
  * ordinary conditional GETs, and a Run check is an expensive browser/code execution. `source.kind`
  * fixes the carrier (migration 0001); PREFERENCE records the order the service is built around.
  *
- * This release carries the pull rungs only:
- *
  *   http  feed  api   implemented here (step 3)
- *   event webhook     step 5
+ *   event             step 5: OpenVibe.Events delivers a matching event and the check reads it (carriers/event.js,
+ *                     server/event-sources.js); a check with no event (Check now) answers watch.event_awaited
+ *   webhook           later in step 5
  *   run               step 6
  *   node              step 7
  *
@@ -24,13 +24,13 @@
 const { createHttpCarrier } = require('./http');
 const { createFeedCarrier } = require('./feed');
 const { createApiCarrier } = require('./api');
+const { createEventCarrier } = require('./event');
 
 /** The documented order. A source kind fixes its carrier; this is the order a watch would prefer. */
 const PREFERENCE = ['event', 'webhook', 'http', 'feed', 'api'];
 
 /** The step of plan T18 that carries each kind this release does not. */
 const LATER = {
-    event: { step: 5, note: 'an event source is delivered by OpenVibe.Events, never polled' },
     webhook: { step: 5, note: 'a webhook source is delivered to /internal/hooks/, never polled' },
     run: { step: 6, note: 'browser polling goes through OpenVibe.Run only after every cheaper rung was unavailable' },
     node: { step: 7, note: 'a node probe observes a local/LAN thing through OpenVibe.Node' },
@@ -52,14 +52,18 @@ function createCarriers({ fetcher, config, log = console }) {
         http: createHttpCarrier({ fetcher, config, log }),
         feed: createFeedCarrier({ fetcher, config, log }),
         api: createApiCarrier({ fetcher, config, log }),
+        event: createEventCarrier(),
     };
 
     /**
-     * choose(watch) → { name, run } | { unavailable: { code, carrier, detail } }.
-     * Never fetches, never throws.
+     * choose(watch, { input }) → { name, run } | { unavailable: { code, carrier, detail } }.
+     * Never fetches, never throws. An event source runs only with the event that woke it.
      */
-    function choose(watch) {
+    function choose(watch, { input = null } = {}) {
         const kind = watch && watch.source ? watch.source.kind : null;
+        if (kind === 'event' && !input) {
+            return { unavailable: { code: 'watch.event_awaited', carrier: 'event', detail: `an event source is checked when a ${watch.source.pattern} event arrives from OpenVibe.Events. Nothing was fetched.` } };
+        }
         const carrier = carriers[kind];
         if (!carrier) return { unavailable: unavailable(kind) };
         return { name: carrier.name, run: carrier.run };

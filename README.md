@@ -89,9 +89,10 @@ every page and every form, never 403. A signed-in write must also come from this
 The cadence is a select (15 minutes, 1 hour, 6 hours, 1 day); 15 minutes is the shortest a person may
 choose here (the contract's floor is 30 seconds, for a service). A validation error re-renders the
 form with the person's own input and the registry's own message next to the field it names. The
-kinds whose carrier does not exist yet (event, webhook, run, node) and the `ai` extraction are **not
+kinds whose carrier does not exist yet (webhook, run, node) and the `ai` extraction are **not
 offered** — and a watch of such a kind created through the API still answers `watch.carrier_unavailable`
-when checked from the site, fetching nothing.
+when checked from the site, fetching nothing. An event watch (made through the API) is checked when its event
+arrives, so Check now answers `watch.event_awaited`.
 
 Check-now from the page respects the API's limits and its refusals: a second check while one runs or
 a check of a paused watch is the API's 409, said in words; a kind without a carrier is the API's 422;
@@ -121,14 +122,14 @@ exists. A service principal that does not name a person owns what it creates.
     webhook/event → ETag/Last-Modified → feed → API → and only then browser polling through Run
 
 The rungs run from cheapest to most expensive, and `source.kind` fixes which one a watch uses.
-This release carries the pull rungs:
+This release carries the pull rungs and event sources:
 
 | Kind | Carrier | State |
 |---|---|---|
 | `http` | one URL, conditional | implemented |
 | `feed` | RSS 2.0 / RSS 1.0 (RDF) / Atom 1.0 → `{ items, latest, count }` | implemented |
 | `api` | JSON/XML with `items_path` + `fields`, or the body itself | implemented |
-| `event` | delivered by OpenVibe.Events | step 5 |
+| `event` | delivered by OpenVibe.Events (see [Event sources](#event-sources)) | implemented |
 | `webhook` | delivered to `/internal/hooks/…` | step 5 |
 | `run` | browser/code polling through OpenVibe.Run | step 6 |
 | `node` | a probe through OpenVibe.Node | step 7 |
@@ -136,6 +137,31 @@ This release carries the pull rungs:
 A kind whose carrier does not exist yet is **accepted by the registry but never fetched**: the
 check is recorded `skipped` with `watch.carrier_unavailable` and the reason names the step. That is
 what keeps a half-built rung from silently turning into polling.
+
+## Event sources
+
+A watch whose source is `{ "kind": "event", "pattern": "host.release.published", "filter": { "repo": "OpenVibe.Bot" } }`
+(and `cadence: null`) is checked when a matching OpenVibe.Events event arrives, and never on a cadence, so it costs
+nothing while nothing happens (`server/event-sources.js`, `server/carriers/event.js`).
+
+- **Matching.** The pattern matches the event type as Events matches topics: `*` stands for one or more whole
+  segments (`media.*.ready`). Every `filter` key must equal the event's value: `subject.id`, `subject.type`, or a
+  top-level `payload` field.
+- **What the extraction reads.** The event is the check's document: `{ event_type, event_id, timestamp, subject,
+  payload }`, so `{ "kind": "json", "value_path": "payload.version" }` takes the released version. Comparison,
+  condition, observations and actions work exactly as for a fetched page.
+- **Only public events.** Anyone may own a watch, and an internal or private event is not theirs to read, so only
+  events with `visibility: "public"` wake a watch.
+- **Once per event.** Events delivers at least once; each `event_id` is handled once (`event_source_receipts`, kept
+  seven days), so a redelivery is answered `duplicate`.
+- **A budget.** At most `WATCH_EVENT_MAX_PER_HOUR` (60) event checks per watch an hour. More are dropped and counted,
+  so a busy pattern cannot turn one watch into a write storm.
+- **Subscriptions.** Watch keeps one Events subscription per distinct pattern of an active event watch, delivered to
+  the same signed loopback route as the account events (`POST /internal/events`, `WATCH_EVENTS_SECRET`). A sync at
+  boot, every `WATCH_EVENT_SYNC_MS` (10 minutes) and two seconds after an event watch changes creates the missing ones,
+  re-enables one a watch needs again, and disables the ones no watch needs. It never touches the account
+  subscriptions or another endpoint's. It is off without `EVENTS_URL`, the secret or the OAuth client secret.
+- **Check now** on an event watch answers 422 `watch.event_awaited`: there is no event to read.
 
 ## A check
 
@@ -236,7 +262,7 @@ an app or module may not.
 | `watch.watch.read` | `GET /api/v1/watches?status=&project_id=&before=&limit=`, `GET /api/v1/watches/:id` |
 | `watch.watch.manage` | `POST /api/v1/watches`, `PATCH /api/v1/watches/:id`, `POST /api/v1/watches/:id/pause`, `POST /api/v1/watches/:id/resume`, `DELETE /api/v1/watches/:id` |
 | `watch.observation.read` | `GET /api/v1/watches/:id/observations?before=&limit=`, `GET /api/v1/watches/:id/checks?before=&limit=` |
-| `watch.check.run` | `POST /api/v1/watches/:id/check` (404 unknown, 409 `watch.busy` while one runs, 409 `watch.disabled` for a paused watch, 422 `watch.carrier_unavailable`) |
+| `watch.check.run` | `POST /api/v1/watches/:id/check` (404 unknown, 409 `watch.busy` while one runs, 409 `watch.disabled` for a paused watch, 422 `watch.carrier_unavailable`, or 422 `watch.event_awaited` for an event source) |
 | `watch.resource.read` | `GET /api/v1/resources?project=&kind=&cursor=&limit=`, `GET /api/v1/resources/:ovrn` (first-party service token only) |
 
 The loopback-only authority index lists non-deleted `watch.watch` resources as
@@ -408,8 +434,10 @@ Called elsewhere, as the service principal `watch` (client credentials from Open
   422), cross-site writes refused, and hostile names and values escaped on every page
 
 Not yet demonstrated: a check against a real site from a deployed service (nothing is deployed
-yet), the event/webhook carriers (step 5), the Run rung (step 6) and Node probes (step 7) — each answers
-`watch.carrier_unavailable` and fetches nothing today — and the action kinds beyond notifications.
+yet), the webhook carrier (step 5), the Run rung (step 6) and Node probes (step 7) — each answers
+`watch.carrier_unavailable` and fetches nothing today — and the action kinds beyond notifications. Event sources are
+covered end to end by `test/event-sources.test.js` (matching, visibility, once per event, the budget, the signed route
+and the subscription sync against a stand-in Events).
 
 ## Deploy
 
