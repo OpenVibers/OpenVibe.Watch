@@ -53,7 +53,16 @@ const actor = {
         if (actorMode === 'busy') throw Object.assign(new Error('capacity'), { status: 503, code: 'actor.capacity.spent' });
         return { id: `tsk_01JAB2C3D4E5F6G7H8J9K0MN${String(tasks.length).padStart(2, '0')}`, state: 'queued' };
     },
+    async runAgent(req) {
+        tasks.push(req);
+        if (actorMode === 'missing') throw Object.assign(new Error('not found'), { status: 404, code: 'actor.agent.not_found' });
+        if (actorMode === 'limit') throw Object.assign(new Error('free tier limit'), { status: 429, code: 'actor.agent.limit' });
+        if (actorMode === 'free') throw Object.assign(new Error('free tier refusal'), { status: 403, code: 'actor.agent.free_tier' });
+        if (actorMode === 'busy') throw Object.assign(new Error('capacity'), { status: 503, code: 'actor.unavailable' });
+        return { id: 'tsk_AGENT', state: 'queued' };
+    },
 };
+const agentId = 'agt_01JAB2C3D4E5F6G7H8J9K0MNPQ';
 const def = (overrides = {}) => ({
     name: 'Widget price',
     source: { kind: 'http', url: `${web.origin}/price`, format: null },
@@ -318,6 +327,62 @@ t('server/actor.js asks Actor as Watch, for the owner, once', async () => {
     assert.deepStrictEqual(c.json, { task: 'do it', idempotency_key: 'watch.r.0', budget: { per_task_usd: 0.2 } });
     await createActorTasks(client, { baseUrl: 'x' }).create({ subjectId: person.sub, task: 'no budget', idempotencyKey: 'watch.r.1' });
     assert.ok(!('budget' in calls[1].json), 'no budget named: Actor applies the tier\'s');
+    const agentRun = await createActorTasks(client, { baseUrl: 'http://127.0.0.1:4950' }).runAgent({ subjectId: person.sub, agentId, input: 'hello' });
+    assert.deepStrictEqual(agentRun, { id: 'tsk_X', state: 'queued' });
+    assert.deepStrictEqual([calls[2].baseUrl, calls[2].audience, calls[2].path, calls[2].retries],
+        ['http://127.0.0.1:4950', 'openvibe.actor', `/api/v1/me/agents/${agentId}/run`, 0]);
+    assert.deepStrictEqual(calls[2].headers, { 'X-OV-Subject': person.sub });
+    assert.deepStrictEqual(calls[2].json, { input: 'hello' });
+});
+
+t('actor-agent validation checks id, note and person ownership', async () => {
+    const action = [{ kind: 'actor-agent', agent_id: agentId, note: 'Review this change.' }];
+    const w = await create(person, { action });
+    assert.deepStrictEqual(svc.registry.view(w).action, action);
+    await assert.rejects(create(person, { action: [{ ...action[0], agent_id: 'agt_bad' }] }), /agent_id/);
+    await assert.rejects(create(person, { action: [{ ...action[0], note: 'x'.repeat(2001) }] }), /note/);
+    await assert.rejects(create(agent, { action }), (e) => e.code === 'watch.invalid' && /action_no_person/.test(e.message));
+    await assert.rejects(create({ sub: 'svc:watch-test' }, { action }), (e) => e.code === 'watch.invalid' && /action_no_person/.test(e.message));
+    await assert.rejects(svc.registry.patch(w.id, { action: [{ ...action[0], agent_id: 'agt_bad' }] }, person), /agent_id/);
+});
+
+t('actor-agent sends note and bounded firing context, records its task, and classifies refusals', async () => {
+    const { actorAgentInputFor } = require('../server/actions');
+    const longInput = actorAgentInputFor({ config: svc.config, watch: { name: 'long value', id: 'wch_x' }, action: { note: 'N'.repeat(2000) }, value: 'V'.repeat(20000), previousValue: 'before', observedAt: Date.now() });
+    assert.strictEqual(longInput.length, 8000);
+    assert.ok(longInput.startsWith(`${'N'.repeat(2000)}\n\nContext:`), 'the note is never cut');
+    tasks.length = 0; actorMode = 'ok';
+    const note = 'N'.repeat(2000);
+    const w = await create(person, { name: 'cheap widget', action: [{ kind: 'actor-agent', agent_id: agentId, note }] });
+    await fire(w);
+    let r = await svc.actions.tick();
+    assert.strictEqual(r.sent, 1);
+    assert.deepStrictEqual([tasks[0].subjectId, tasks[0].agentId], [person.sub, agentId]);
+    assert.ok(tasks[0].input.startsWith(`${note}\n\nContext: your watch “cheap widget” fired at `));
+    assert.match(tasks[0].input, /Value: 7\.50 \(was 19\.99\)\./);
+    assert.ok(tasks[0].input.includes(`https://openvibe.watch/watches/${w.id}`));
+    assert.ok(tasks[0].input.length <= 8000);
+    assert.deepStrictEqual([(await acts(w.id))[0].state, (await acts(w.id))[0].last_error], ['sent', 'Actor task tsk_AGENT']);
+
+    for (const [kind, expected] of [['missing', /actor\.agent\.not_found/], ['limit', /actor\.agent\.limit/], ['free', /actor\.agent\.free_tier/], ['busy', /actor\.unavailable/]]) {
+        actorMode = kind;
+        const next = await create(person, { action: [{ kind: 'actor-agent', agent_id: agentId }] });
+        await fire(next);
+        r = await svc.actions.tick();
+        const row = (await acts(next.id))[0];
+        assert.strictEqual(row.state, kind === 'busy' ? 'queued' : 'failed');
+        assert.match(row.last_error, expected);
+        assert.strictEqual(kind === 'busy' ? r.retried : r.failed, 1);
+        if (kind === 'busy') {
+            // Actor is back: the queued run goes out on the next due tick, so the queue ends empty.
+            actorMode = 'ok';
+            await svc.db.prepare('UPDATE action_runs SET next_attempt_at = 0 WHERE watch_id = ?').run(next.id);
+            r = await svc.actions.tick();
+            assert.strictEqual(r.sent, 1);
+            assert.strictEqual((await acts(next.id))[0].state, 'sent');
+        }
+    }
+    actorMode = 'ok';
 });
 
 t('readiness counts the queue, and the watch page says what the watch did when it fired', async () => {

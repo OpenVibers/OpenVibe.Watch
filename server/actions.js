@@ -35,6 +35,8 @@
  *                  Actor refuses as invalid (over the tier's budget, an unknown agent) is `failed` at once; anything
  *                  else, including an allowance spent for the day, is retried on the backoff. It needs a person as
  *                  owner: an agent- or service-owned watch is `skipped`.
+ *   actor-agent    runs one of the owner's personal agents on Actor with a note and bounded firing context.
+ *                  A missing agent or allowance refusal fails this firing; a service error retries.
  *   codes-run, run-job
  *                  `unavailable` with `watch.action_unavailable`: their dispatchers are later steps of the plan, and
  *                  the watch page says so rather than pretending they ran.
@@ -103,16 +105,26 @@ function webhookFor({ config, watch, run, value, previousValue, observedAt }) {
 
 /** The task an actor-task action gives Actor: its brief, then what fired, so the agent knows why it was woken. */
 function actorTaskFor({ config, watch, action, value, previousValue, observedAt }) {
+    const context = actorContextFor({ config, watch, value, previousValue, observedAt });
+    const brief = String(action.brief || '').trim();
+    return `${brief.slice(0, TASK_MAX - context.length - 2)}\n\n${context}`;
+}
+
+function actorContextFor({ config, watch, value, previousValue, observedAt }, maxLength = Infinity) {
     const now = valueText(value);
     const before = previousValue === undefined || previousValue === null ? null : valueText(previousValue);
     const when = observedAt ? new Date(observedAt).toISOString() : 'just now';
-    const context = [
-        `Context: your watch “${watch.name}” fired at ${when}.`,
-        `Value: ${now}${before !== null && before !== now ? ` (was ${before})` : ''}.`,
-        `Watch: ${config.baseUrl}/watches/${encodeURIComponent(watch.id)}`,
-    ].join('\n');
-    const brief = String(action.brief || '').trim();
-    return `${brief.slice(0, TASK_MAX - context.length - 2)}\n\n${context}`;
+    const first = `Context: your watch “${watch.name}” fired at ${when}.`;
+    const last = `Watch: ${config.baseUrl}/watches/${encodeURIComponent(watch.id)}`;
+    const valueLine = `Value: ${now}${before !== null && before !== now ? ` (was ${before})` : ''}.`;
+    const room = Math.max(0, maxLength - first.length - last.length - 2);
+    return [first, valueLine.length > room ? `${valueLine.slice(0, Math.max(0, room - 1))}…` : valueLine, last].join('\n').slice(0, maxLength);
+}
+
+function actorAgentInputFor(args) {
+    const note = typeof args.action.note === 'string' ? args.action.note : '';
+    const prefix = note ? `${note}\n\n` : '';
+    return prefix + actorContextFor(args, 8000 - prefix.length);
 }
 
 function createActions({ db, config, notifications = null, post = null, actor = null, now = () => Date.now(), log = console }) {
@@ -159,6 +171,10 @@ function createActions({ db, config, notifications = null, post = null, actor = 
                 if (USER_SUBJECT.test(String(owner || ''))) {
                     request = { task: actorTaskFor({ config, watch, action, value, previousValue, observedAt }), budget_usd: action.budget_usd == null ? null : action.budget_usd };
                 } else { state = 'skipped'; error = 'watch.action_no_person: an Actor task runs under a person\'s allowance, and this watch belongs to an agent or a service'; }
+            } else if (kind === 'actor-agent') {
+                if (USER_SUBJECT.test(String(owner || ''))) {
+                    request = { agent_id: action.agent_id, input: actorAgentInputFor({ config, watch, action, value, previousValue, observedAt }) };
+                } else { state = 'skipped'; error = 'watch.action_no_person: an Actor agent runs for a person, and this watch belongs to an agent or a service'; }
             } else if (LATER.has(kind)) {
                 state = 'unavailable'; error = `watch.action_unavailable: ${kind} actions are a later step (plan T18)`;
             } else {
@@ -210,10 +226,25 @@ function createActions({ db, config, notifications = null, post = null, actor = 
         }
     }
 
+    async function deliverActorAgent(row, request) {
+        if (!actor) throw Object.assign(new Error('Actor delivery is not configured in this process'), { code: 'actor_unconfigured' });
+        try {
+            const task = await actor.runAgent({ subjectId: row.owner_sub, agentId: request.agent_id, input: request.input });
+            return { state: 'sent', error: `Actor task ${task.id || '(no id)'}` };
+        } catch (err) {
+            if (err && err.status === 404 && err.code === 'actor.agent.not_found') return { state: 'failed', error: `watch.action_refused: ${err.code}: this agent was not found for the watch owner` };
+            if (err && (err.status === 429 || err.status === 400 || err.status === 422 || (err.status === 403 && /(?:limit|free.tier|over_tier)/i.test(String(err.code || ''))))) {
+                return { state: 'failed', error: `watch.action_refused: ${err.code || err.status}: ${String(err.detail || err.message || '').slice(0, 200)}` };
+            }
+            throw err;
+        }
+    }
+
     async function deliver(row, attempt) {
         const request = typeof row.request === 'string' ? JSON.parse(row.request) : row.request;
         if (row.kind === 'webhook') return await deliverWebhook(row, request, attempt);
         if (row.kind === 'actor-task') return await deliverActorTask(row, request);
+        if (row.kind === 'actor-agent') return await deliverActorAgent(row, request);
         if (row.kind !== 'notification') return { state: 'unavailable', error: `watch.action_unavailable: ${row.kind}` };
         const out = await notifications.push({ subjectId: row.owner_sub, ...request });
         if (out.sent) return { state: 'sent', error: out.skipped ? 'delivered; the person switched this category off' : null };
@@ -285,4 +316,4 @@ function createActions({ db, config, notifications = null, post = null, actor = 
     return { queue, tick, start, stop, status, recent, enabled };
 }
 
-module.exports = { createActions, notificationFor, webhookFor, actorTaskFor, BACKOFF_MS };
+module.exports = { createActions, notificationFor, webhookFor, actorTaskFor, actorAgentInputFor, BACKOFF_MS };

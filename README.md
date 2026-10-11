@@ -227,6 +227,7 @@ A fired condition queues the watch's actions in the same transaction as the chec
 | `event` | `watch.watch.triggered` is emitted with every firing in the run's own commit, so that action is recorded `sent` as it is queued (the event names a person: an agent- or service-owned watch is `skipped`). Any other event type is not declared by Watch: `unavailable` |
 | `webhook` | a POST of the firing (`type`, `watch {id, name, url}`, `check_run_id`, `condition`, `observation {observed_at, value, previous_value}`) to the action's https URL, through the same SSRF guard as every fetch, never following a redirect ([server/net/post.js](server/net/post.js)). It is signed with the key `secret_env` names exactly as OpenVibe.Events signs a delivery (`X-OpenVibe-Timestamp` + `X-OpenVibe-Signature-V2`; check it with openvibe-sdk/events `verifyDeliveryV2`). `X-OpenVibe-Delivery-Id` (`<check run>.<action index>`) is the same on every attempt, so a receiver can drop a repeat. 2xx is `sent`. 410 or a URL the guard refuses is `failed` at once. Anything else, or a lost connection, is retried on the backoff, then `failed`. The key must be granted to the owner (`WATCH_SECRET_GRANTS`, below) and set, 32 characters or more: otherwise `unavailable` |
 | `actor-task` | a task for the owner on OpenVibe.Actor ([server/actor.js](server/actor.js)): the action's `brief`, followed by the firing as context (the watch, the value and what it was, its page), at most `budget_usd`. Watch names the owner in `X-OV-Subject`, so the task runs under **the owner's** allowance and appears in their task list, and Actor records Watch as `via`. The idempotency key `watch.<check run>.<action index>` makes a retried delivery the same task. Created is `sent`, with the task id recorded. A request Actor refuses as invalid (over the tier's budget, an unknown agent) is `failed` at once. Anything else, including a day's allowance spent, is retried on the backoff. An agent- or service-owned watch is `skipped`. Needs `actor.task.create` for `openvibe.actor` (Network grants it) and `WATCH_ACTOR_URL` |
+| `actor-agent` | runs one of the person's OpenVibe.Actor agents by `agent_id`. Its optional `note` precedes the firing context (watch name and link, value and previous value, observation time); input is capped at 8000 characters without cutting the note. Watch uses `X-OV-Subject` for the owner. A created run is `sent` with its task id; a missing agent, limit or free-tier refusal is `failed` for that firing; service errors retry on the usual backoff. Only person-owned watches may use it. Needs the `actor.agent.run` grant for `openvibe.actor` and `WATCH_ACTOR_URL` |
 | `codes-run`, `run-job` | recorded `unavailable` (`watch.action_unavailable`): their dispatchers are later steps, and the watch page says so |
 
 Rows are claimed with a short lease (FOR UPDATE SKIP LOCKED), so two processes never deliver one row at once.
@@ -487,7 +488,7 @@ POSTs have their own per-address limit zones (nginx refuses `limit_req` inside `
 `sudo ovhost deploy watch`.
 
 <!-- versions:start -->
-- openvibe-contracts: v0.129.0
+- openvibe-contracts: v0.143.0
 - openvibe-sdk: v0.44.0
 - openvibe-shared: v4.0.2
 <!-- versions:end -->

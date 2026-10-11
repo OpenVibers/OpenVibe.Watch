@@ -30,6 +30,8 @@ const STATUSES = ['active', 'paused', 'disabled', 'failed'];
 const MIN_EVERY_SEC = 900;
 /** Headers the fetcher decides; a watch may never override them (SSRF and conditional-GET safety). */
 const FORBIDDEN_HEADERS = new Set(['host', 'cookie', 'connection', 'content-length', 'transfer-encoding', 'user-agent', 'accept-encoding', 'if-none-match', 'if-modified-since']);
+const PERSON = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
+const AGENT_ID = /^agt_[0-9A-HJKMNP-TV-Z]{26}$/;
 
 class RegistryError extends Error {
     constructor(detail, code = 'watch.invalid') { super(detail); this.code = code; }
@@ -59,6 +61,14 @@ function defaultName(source) {
  */
 function validateRequest(body, { create = false } = {}) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new RegistryError('body must be a watch object');
+    for (const [i, action] of (Array.isArray(body.action) ? body.action : []).entries()) {
+        if (action && action.kind === 'actor-agent') {
+            if (!AGENT_ID.test(action.agent_id)) throw new RegistryError(`/action/${i}/agent_id must be an Actor agent id`);
+            if (action.note !== undefined && action.note !== null && (typeof action.note !== 'string' || action.note.length > 2000)) {
+                throw new RegistryError(`/action/${i}/note must be a string of at most 2000 characters or null`);
+            }
+        }
+    }
     const v = validate('watch.watch-request@1', body);
     if (!v.valid) throw new RegistryError(`body does not match watch.watch-request@1: ${v.errors.map(e => `${e.path} ${e.message}`).join('; ')}`);
     if (create) {
@@ -128,6 +138,11 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (!secretGrants) return;
         const bad = secretGrants.check(owner, rec);
         if (bad.length) throw new RegistryError(`${bad[0].path}: ${bad[0].reason}`, 'watch.secret_not_granted');
+    }
+    function checkActorAgents(owner, rec) {
+        if (!PERSON.test(String(owner || '')) && Array.isArray(rec.action) && rec.action.some((a) => a && a.kind === 'actor-agent')) {
+            throw new RegistryError('watch.action_no_person: an Actor agent runs for a person, and this watch belongs to an agent or a service');
+        }
     }
 
     const st = {
@@ -249,6 +264,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const owner = ownerOf(principal);
         if (!owner) throw new RegistryError('no acting subject', 'watch.invalid');
         checkSecrets(owner, req);
+        checkActorAgents(owner, req);
         // A per-owner cap, so one caller cannot fill the registry (the API and the form both come
         // through here). The number is a config value (WATCH_MAX_PER_OWNER).
         const owned = await st.countOwned.get(owner);
@@ -317,6 +333,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (changes.project_id === undefined) delete merged.project_id;
         validateRequest(merged);
         checkSecrets(row.owner_sub, merged);
+        checkActorAgents(row.owner_sub, merged);
         const sets = [];
         const args = { id: row.id, updated_at: now(), updated_by: ownerOf(principal) };
         for (const [k, v] of Object.entries(changes)) {

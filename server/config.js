@@ -99,7 +99,7 @@ function load(env = process.env) {
             batch: int(env.WATCH_ACTIONS_BATCH, 20),
             // A webhook receiver answers within this, or the attempt is retried on the backoff.
             webhookTimeoutMs: int(env.WATCH_WEBHOOK_TIMEOUT_MS, 10000),
-            // OpenVibe.Actor's internal address, for actor-task actions (Watch's token needs actor.task.create).
+            // OpenVibe.Actor's internal address, for actor-task and actor-agent actions.
             actorUrl: (env.WATCH_ACTOR_URL || 'http://127.0.0.1:4950').replace(/\/+$/, ''),
         },
 
