@@ -143,7 +143,7 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
         if (!req.path.startsWith('/api') && !req.path.startsWith('/auth')) res.setHeader('Content-Security-Policy', CSP);
         next();
     });
-    app.use(createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, actions, log }));
+    app.use(createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, actions, log, webhookSources }));
 
     app.use((req, res) => send(res, 404, {
         viewer: req.viewer, config, path: req.originalUrl, title: 'Not found',

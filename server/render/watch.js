@@ -77,9 +77,18 @@ function conditionWords(condition, { forSec = true } = {}) {
 /** The watch as one sentence: "Tell me when … on …, checked every …". */
 function inWords(watch) {
     const source = watch.source || {};
-    const what = source.kind === 'feed'
-        ? (watch.extraction && watch.extraction.value_path ? html`${extractionWords(watch.extraction)} of the newest item of the feed` : 'the newest item of the feed')
-        : html`${extractionWords(watch.extraction)} on <b>${host(source.url)}</b>`;
+    const e = watch.extraction || {};
+    const path = (e.kind === 'json' || e.kind === 'jsonpath') && e.value_path ? e.value_path : null;
+    let what;
+    if (source.kind === 'feed') {
+        what = e.value_path ? html`${extractionWords(watch.extraction)} of the newest item of the feed` : 'the newest item of the feed';
+    } else if (source.kind === 'webhook') {
+        what = path ? html`the value at <code>${path}</code> in a webhook delivery` : (e.kind === 'text' ? 'what a webhook delivery says' : 'a webhook delivery');
+    } else if (source.kind === 'event') {
+        what = path ? html`the value at <code>${path}</code> of a <b>${source.pattern}</b> event` : html`a <b>${source.pattern}</b> event`;
+    } else {
+        what = html`${extractionWords(watch.extraction)} on <b>${host(source.url)}</b>`;
+    }
     const every = watch.cadence ? `, checked ${everyWords(watch.cadence.every_sec)}` : '';
     return html`Tell me when ${what} ${conditionWords(watch.condition)}${every}.`;
 }
