@@ -121,7 +121,7 @@ function createPageRoutes(ctx) {
             template, name: '', url: '', kind: t.kind,
             extraction: t.extraction, selector: '', value_path: t.valuePath || '',
             op: t.defaultOp || t.ops[0], value: '', for_sec: '',
-            cadence: '3600', notify: 'on',
+            cadence: '3600', notify: 'on', agent_on: '', agent_id: '', agent_note: '',
         };
     }
 
@@ -132,6 +132,7 @@ function createPageRoutes(ctx) {
     function postedFields(template, body) {
         const fields = { ...blankFields(template), ...(body || {}) };
         fields.notify = body && body.notify === 'on' ? 'on' : '';
+        fields.agent_on = body && body.agent_on === 'on' ? 'on' : '';
         return fields;
     }
 
@@ -163,9 +164,25 @@ function createPageRoutes(ctx) {
             for_sec: (watch.condition && Number.isInteger(watch.condition.for_sec)) ? String(watch.condition.for_sec) : '',
             cadence: String((watch.cadence && watch.cadence.every_sec) || 3600),
             notify: notifyOn(watch.action) ? 'on' : '',
+            agent_on: agentAction(watch.action) ? 'on' : '',
+            agent_id: (agentAction(watch.action) || {}).agent_id || '',
+            agent_note: (agentAction(watch.action) || {}).note || '',
         };
     }
     const notifyOn = (action) => Array.isArray(action) && action.some((a) => a && a.kind === 'notification');
+    const agentAction = (action) => Array.isArray(action) ? action.find((a) => a && a.kind === 'actor-agent') : null;
+
+    function actionsFrom(fields, errors) {
+        const action = fields.notify === 'on' ? [...NOTIFY_ACTION] : [];
+        if (fields.agent_on === 'on') {
+            const agentId = String(fields.agent_id || '').trim();
+            const note = String(fields.agent_note || '');
+            if (!/^agt_[0-9A-HJKMNP-TV-Z]{26}$/.test(agentId)) errors.agent_id = 'Give a valid Actor agent id (agt_ followed by 26 characters).';
+            if (note.length > 2000) errors.agent_note = 'The note can be at most 2000 characters.';
+            action.push({ kind: 'actor-agent', agent_id: agentId, ...(note ? { note } : {}) });
+        }
+        return action.length ? action : QUIET_ACTION;
+    }
 
     /** The condition a form says, checked against the template's ops. Returns { condition } or { error }. */
     function conditionFrom(fields, template) {
@@ -198,6 +215,7 @@ function createPageRoutes(ctx) {
     function buildBody(fields, template) {
         const t = TEMPLATES[template];
         const errors = {};
+        const action = actionsFrom(fields, errors);
         // A webhook watch has no address to fetch and no cadence: it is pushed to (server/webhook-sources.js).
         if (template === 'webhook') {
             const name = String(fields.name == null ? '' : fields.name).trim();
@@ -211,7 +229,7 @@ function createPageRoutes(ctx) {
                 cadence: null,
                 extraction: valuePath ? { kind: 'json', value_path: valuePath } : { kind: 'text' },
                 condition: c.condition,
-                action: fields.notify === 'on' ? NOTIFY_ACTION : QUIET_ACTION,
+                action,
             };
             if (name) body.name = name;
             return { body };
@@ -252,7 +270,7 @@ function createPageRoutes(ctx) {
             cadence: { every_sec: cadenceSec, jitter_sec: 0 },
             extraction,
             condition: c.condition,
-            action: fields.notify === 'on' ? NOTIFY_ACTION : QUIET_ACTION,
+            action,
         };
         if (name) body.name = name;   // omitted, not undefined: the registry names it from the source
         return { body };
@@ -265,8 +283,8 @@ function createPageRoutes(ctx) {
      */
     function registryField(message) {
         const m = String(message);
-        const named = m.match(/\/(?:source|extraction|condition|cadence|name|action)\/(url|selector|value_path|value|for_sec|every_sec)\b/);
-        if (named) return named[1] === 'every_sec' ? 'cadence' : named[1];
+        const named = m.match(/\/(?:source|extraction|condition|cadence|name|action)(?:\/\d+)?\/(url|selector|value_path|value|for_sec|every_sec|agent_id|note)\b/);
+        if (named) return named[1] === 'every_sec' ? 'cadence' : (named[1] === 'note' ? 'agent_note' : named[1]);
         if (/\/name\b/.test(m)) return 'name';
         if (/\/condition\b/.test(m)) return 'op';
         if (/\/cadence\b/.test(m)) return 'cadence';
@@ -363,9 +381,12 @@ ${conditionBlock}
 <fieldset><legend>${pushed ? 'How to tell you' : 'How often, and how to tell you'}</legend>
 ${pushed ? html`<p class="muted small">Checked each time a signed delivery arrives (at most 60 an hour), never on a cadence.</p>` : field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
 ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'When the condition fires you get one notification on OpenVibe (your notifications on any OpenVibe site), with the value and a link here.' })}
+${checkbox('Run one of my agents on OpenVibe.Actor', { name: 'agent_on', checked: fields.agent_on === 'on', hint: 'When the condition fires, Watch gives your agent the value and a link to this watch.' })}
+${field('Agent id', html`<input type="text" id="${idOf('agent_id')}" name="agent_id" value="${fields.agent_id}" maxlength="30" placeholder="agt_…">`, { name: 'agent_id', error: errors.agent_id, hint: 'Find the id on your agent’s OpenVibe.Actor page. Required when running an agent.' })}
+${field('Note for the agent (optional)', html`<textarea id="${idOf('agent_note')}" name="agent_note" maxlength="2000" rows="3">${fields.agent_note}</textarea>`, { name: 'agent_note', error: errors.agent_note })}
 </fieldset>
 <p class="form-actions"><button class="btn primary" type="submit">${submit}</button> <a href="/watches">Cancel</a></p>
-<p class="muted small">Notifications are delivered today. Events, webhooks and tasks for OpenVibe.Actor, Codes and Run are later steps: a watch that asks for one records it as not available yet.</p>
+<p class="muted small">Notifications and Actor agents are delivered when the watch fires. Codes and Run actions are later steps.</p>
 </form>`;
     }
 
@@ -558,6 +579,9 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create 
         const obs = await observations.list(row.id, { before: ridBefore(req.query.obs_before), limit: obsLimit(req.query.obs_limit) });
         const runs = await check.list(row.id, { before: ridBefore(req.query.checks_before), limit: obsLimit(req.query.checks_limit) });
         const acts = actions ? await actions.recent(row.id, 10) : [];
+        const configuredActions = (v.action || []).map((a) => a.kind === 'actor-agent'
+            ? html`<div>Run agent <a href="https://openvibe.actor/me/agents/${a.agent_id}"><code>${a.agent_id}</code></a>${a.note ? html` — ${a.note}` : ''}</div>`
+            : html`<div><code>${a.kind}</code></div>`);
 
         const obsRows = obs.map((o) => [
             time(new Date(Number(o.observed_at)).toISOString()),
@@ -609,6 +633,7 @@ ${v.source.kind === 'webhook'
                 ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">The secret was shown once, when the watch was made. A new one replaces it at once.</span></dd>`
                 : html`<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>`}
 <dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : (v.source.kind === 'webhook' ? 'when a delivery arrives' : (v.source.kind === 'event' ? 'when its event arrives' : 'not polled'))}</dd>
+<dt>Actions</dt><dd>${configuredActions}</dd>
 <dt>Last check</dt><dd>${v.health.last_check_at ? html`${time(v.health.last_check_at)} — ${W.stateWords(v.health.last_state)}` : html`<span class="muted">not checked yet</span>`}</dd>
 <dt>Next due</dt><dd>${v.health.next_due_at ? time(v.health.next_due_at) : html`<span class="muted">—</span>`}</dd>
 ${v.health.consecutive_failures ? html`<dt>Failing</dt><dd>${v.health.consecutive_failures} check(s) in a row</dd>` : ''}
@@ -760,6 +785,7 @@ ${watchForm({ template: fields.template, fields, errors: {}, action: `/watches/$
         const template = getTemplate((req.body || {}).template);
         const fields = { ...fieldsOfWatch(registry.view(row)), ...(req.body || {}) };
         fields.notify = req.body && req.body.notify === 'on' ? 'on' : '';
+        fields.agent_on = req.body && req.body.agent_on === 'on' ? 'on' : '';
         const built = buildBody(fields, template);
         let errors = built.errors;
         if (!errors) {

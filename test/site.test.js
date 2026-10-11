@@ -19,6 +19,7 @@ let session;   // the cookie from a real sign-in
 
 const create = (fields) => svc.get('/watches/new', { cookie: session, form: fields });
 const indexOf = (res) => (String(res.location || '').match(/\/watches\/(wch_[0-9A-HJKMNP-TV-Z]{26})/) || [])[1] || null;
+const agentId = 'agt_01JAB2C3D4E5F6G7H8J9K0MNPQ';
 
 t('boot', async () => {
     web = await site({ '/price': () => ({ body: '<html><body><span class="price">19.99</span></body></html>' }) });
@@ -138,6 +139,26 @@ t('notify me off stores an event action instead of a notification, and says so',
     assert.strictEqual(created.status, 303);
     const read = await request(svc.base, 'GET', `/api/v1/watches/${indexOf(created)}`, { token: ME });
     assert.deepStrictEqual(read.body.watch.action, [{ kind: 'event', event_type: 'watch.watch.triggered' }]);
+});
+
+t('the plain create and edit forms save an Actor agent action', async () => {
+    const form = await svc.get('/watches/new?template=page', { cookie: session });
+    assert.match(form.text, /Run one of my agents on OpenVibe\.Actor/);
+    assert.match(form.text, /name="agent_id"/);
+    const made = await create({ template: 'page', url: `${web.origin}/price`, cadence: '3600', agent_on: 'on', agent_id: agentId, agent_note: 'Check this value.' });
+    assert.strictEqual(made.status, 303);
+    const id = indexOf(made);
+    const view = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: ME });
+    assert.deepStrictEqual(view.body.watch.action, [{ kind: 'actor-agent', agent_id: agentId, note: 'Check this value.' }]);
+    const page = await svc.get(`/watches/${id}`, { cookie: session });
+    assert.ok(page.text.includes(`https://openvibe.actor/me/agents/${agentId}`));
+    const edit = await svc.get(`/watches/${id}/edit`, { cookie: session });
+    assert.match(edit.text, /name="agent_on"[^>]*checked/);
+    assert.ok(edit.text.includes('Check this value.'));
+    const saved = await svc.get(`/watches/${id}/edit`, { cookie: session, form: { template: 'page', url: `${web.origin}/price`, cadence: '3600', agent_on: 'on', agent_id: agentId, agent_note: 'New note.' } });
+    assert.strictEqual(saved.status, 303);
+    const updated = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: ME });
+    assert.strictEqual(updated.body.watch.action[0].note, 'New note.');
 });
 
 t('validation errors re-render the form with the registry\'s message and the person\'s input', async () => {

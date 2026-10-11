@@ -7,7 +7,7 @@
   "runtime": "node 22, express, PostgreSQL 18 (openvibe-sdk/db, async) + Valkey 9, fast-xml-parser",
   "port": 4730,
   "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
-  "contracts": "openvibe-contracts v0.129.0",
+  "contracts": "openvibe-contracts v0.143.0 (actor-agent requires v0.143.0)",
   "sdk": "openvibe-sdk v0.44.0",
   "shared": "openvibe-shared v4.0.2",
   "capabilities": [
@@ -34,6 +34,15 @@
     "webhook (step 5)",
     "run (step 6)",
     "node (step 7)"
+  ],
+  "actionKinds": [
+    "notification",
+    "event",
+    "webhook",
+    "actor-task",
+    "actor-agent",
+    "codes-run",
+    "run-job"
   ],
   "seededWatches": 0,
   "deployed": true,
