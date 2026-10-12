@@ -101,6 +101,8 @@ function load(env = process.env) {
             webhookTimeoutMs: int(env.WATCH_WEBHOOK_TIMEOUT_MS, 10000),
             // OpenVibe.Actor's internal address, for actor-task and actor-agent actions.
             actorUrl: (env.WATCH_ACTOR_URL || 'http://127.0.0.1:4950').replace(/\/+$/, ''),
+            // OpenVibe.Run's internal address, for run-job actions (a job for the owner in the watch's project).
+            runUrl: (env.WATCH_RUN_URL || 'http://127.0.0.1:4920').replace(/\/+$/, ''),
         },
 
         // Who may use which named secret (server/secret-grants.js): a WATCH_CRED_* credential (owners and the origins

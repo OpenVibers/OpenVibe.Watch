@@ -16,6 +16,13 @@
  * Ownership is the authority: every read and write is scoped to the acting subject (principal.sub,
  * or the person a first-party service names with X-OV-Subject), and another owner's watch is not
  * found — 404, never 403 (an id must not confirm that someone else's watch exists).
+ *
+ * A watch may name a project (project_id, ADR-003 amendment 2026-10-12): the project its run-job actions are billed
+ * to. Only a person names one, and only a project Network says they are an admin or owner of (not archived), checked
+ * when the project is first named or changed (403 project.not_delegated; 503 watch.project_check_unavailable when
+ * Network cannot answer). OpenVibe.Run checks again before every job, so a later loss of the role stops the jobs. A
+ * run-job action needs the watch to name a project (422 watch.project_required) and run.job-create-request@1's
+ * class and limits (and artifact for function and code); the draft's runtime/command/workload are refused.
  */
 const { validate, ids: contractIds } = require('openvibe-contracts');
 const safe = require('./safe-regex');
@@ -32,9 +39,13 @@ const MIN_EVERY_SEC = 900;
 const FORBIDDEN_HEADERS = new Set(['host', 'cookie', 'connection', 'content-length', 'transfer-encoding', 'user-agent', 'accept-encoding', 'if-none-match', 'if-modified-since']);
 const PERSON = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 const AGENT_ID = /^agt_[0-9A-HJKMNP-TV-Z]{26}$/;
+/** The run-job fields of the contract's early draft, which never ran: refused, so nobody writes a job that cannot start. */
+const RUN_JOB_DRAFT = ['runtime', 'command', 'workload'];
+const ARTIFACT_CLASSES = new Set(['function', 'code']);
 
 class RegistryError extends Error {
-    constructor(detail, code = 'watch.invalid') { super(detail); this.code = code; }
+    /** status: the HTTP answer when it is not the default (422; 500 for watch.internal, 409 for watch.exists). */
+    constructor(detail, code = 'watch.invalid', status = null) { super(detail); this.code = code; if (status) this.status = status; }
 }
 
 const parse = (v) => (v == null ? null : (typeof v === 'string' ? JSON.parse(v) : v));
@@ -71,6 +82,17 @@ function validateRequest(body, { create = false } = {}) {
     }
     const v = validate('watch.watch-request@1', body);
     if (!v.valid) throw new RegistryError(`body does not match watch.watch-request@1: ${v.errors.map(e => `${e.path} ${e.message}`).join('; ')}`);
+    for (const [i, action] of (Array.isArray(body.action) ? body.action : []).entries()) {
+        if (!action || action.kind !== 'run-job') continue;
+        const draft = RUN_JOB_DRAFT.find((f) => action[f] !== undefined);
+        if (draft) throw new RegistryError(`/action/${i}/${draft} is not accepted: a run-job action takes run.job-create-request@1 fields (class, artifact, args, limits, egress, ttl_ms)`);
+        if (!action.class) throw new RegistryError(`/action/${i}/class is required (a platform.runtime-class@1 name)`);
+        if (!action.limits) throw new RegistryError(`/action/${i}/limits is required (wall_ms, cpu_ms, mem_bytes)`);
+        if (ARTIFACT_CLASSES.has(action.class) && !action.artifact) throw new RegistryError(`/action/${i}/artifact is required for a ${action.class} job (name and one exact version)`);
+        if (action.firing_arg && action.args && Object.prototype.hasOwnProperty.call(action.args, action.firing_arg)) {
+            throw new RegistryError(`/action/${i}/firing_arg names a key args already has (${action.firing_arg})`);
+        }
+    }
     if (create) {
         for (const field of ['source', 'extraction', 'condition', 'action']) {
             if (body[field] === undefined || body[field] === null) throw new RegistryError(`a new watch requires ${field}`);
@@ -132,7 +154,7 @@ function validateView(view) {
     return view;
 }
 
-function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50, secretGrants = null }) {
+function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50, secretGrants = null, projects = null }) {
     /** A named secret the owner may not use is refused when the watch is saved (server/secret-grants.js). */
     function checkSecrets(owner, rec) {
         if (!secretGrants) return;
@@ -143,6 +165,24 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (!PERSON.test(String(owner || '')) && Array.isArray(rec.action) && rec.action.some((a) => a && a.kind === 'actor-agent')) {
             throw new RegistryError('watch.action_no_person: an Actor agent runs for a person, and this watch belongs to an agent or a service');
         }
+    }
+    /**
+     * The project a watch names (project delegation): a run-job action needs one, and a project newly named (`named`)
+     * must be one Network says the owner is an admin or owner of. The refusal never says which check failed.
+     */
+    async function checkProject(owner, rec, named) {
+        const project = rec.project_id || null;
+        if (!project && Array.isArray(rec.action) && rec.action.some((a) => a && a.kind === 'run-job')) {
+            throw new RegistryError('a run-job action is billed to a project: set project_id to a project you are an admin or owner of', 'watch.project_required');
+        }
+        if (!project || !named) return;
+        const refused = new RegistryError('project_id must be a project you are an admin or owner of, and not archived', 'project.not_delegated', 403);
+        if (!PERSON.test(String(owner || ''))) throw refused;
+        if (!projects) throw new RegistryError('this Watch cannot check project memberships (no Network client)', 'watch.project_check_unavailable', 503);
+        let r;
+        try { r = await projects.check(project, owner); }
+        catch { throw new RegistryError('Network could not confirm the project membership just now; try again', 'watch.project_check_unavailable', 503); }
+        if (!r || !r.ok) throw refused;
     }
 
     const st = {
@@ -265,6 +305,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (!owner) throw new RegistryError('no acting subject', 'watch.invalid');
         checkSecrets(owner, req);
         checkActorAgents(owner, req);
+        await checkProject(owner, req, true);
         // A per-owner cap, so one caller cannot fill the registry (the API and the form both come
         // through here). The number is a config value (WATCH_MAX_PER_OWNER).
         const owned = await st.countOwned.get(owner);
@@ -288,7 +329,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         };
         const row = {
             id,
-            project_id: null,
+            project_id: req.project_id || null,
             owner_sub: owner,
             name: rec.name,
             status: rec.status,
@@ -328,12 +369,13 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const merged = { ...current, ...changes };
         delete merged.id;      // an id never changes
         delete merged.owner;   // ownership never changes (a watch is the subject's)
-        // project_id is not part of watch.watch-request@1: the row's own null is dropped, and a
-        // caller that sends one fails the schema check below rather than being silently ignored.
-        if (changes.project_id === undefined) delete merged.project_id;
+        // The row's own null project is dropped (null is "none" on the wire too); a project the patch names, or the
+        // one the watch already has, travels with the merged watch so a run-job action is judged against it.
+        if (merged.project_id === null) delete merged.project_id;
         validateRequest(merged);
         checkSecrets(row.owner_sub, merged);
         checkActorAgents(row.owner_sub, merged);
+        await checkProject(row.owner_sub, merged, changes.project_id !== undefined && changes.project_id !== row.project_id);
         const sets = [];
         const args = { id: row.id, updated_at: now(), updated_by: ownerOf(principal) };
         for (const [k, v] of Object.entries(changes)) {

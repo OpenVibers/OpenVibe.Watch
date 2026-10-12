@@ -29,7 +29,7 @@ function watchesRouter({ registry, auth, limits, webhookSources = null }) {
 
     const fail = (res, req, err) => {
         if (err instanceof RegistryError) {
-            const status = err.code === 'watch.internal' ? 500 : (err.code === 'watch.exists' ? 409 : 422);
+            const status = err.status || (err.code === 'watch.internal' ? 500 : (err.code === 'watch.exists' ? 409 : 422));
             return http.sendProblem(res, status, err.code, { detail: err.message, ctx: req.ov });
         }
         throw err;
