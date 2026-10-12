@@ -508,6 +508,20 @@ ${older ? html`<a class="btn" href="${older}">Older watches</a>` : html`<span cl
 
     const getTemplate = (q) => (TEMPLATE_NAMES.includes(String(q)) ? String(q) : 'page');
 
+    /**
+     * A link from another OpenVibe site may start the form filled in (Host's "Watch this price": template json, the plan's
+     * API URL, value_path plan.price_monthly, op changed). Only form defaults: the person still reviews and submits, and
+     * the POST validates everything as usual. Each value is bounded; anything unexpected is dropped, never an error.
+     */
+    function prefilled(template, q = {}) {
+        const fields = { ...blankFields(template), url: typeof q.url === 'string' ? q.url.slice(0, 2000) : '' };
+        if (typeof q.name === 'string') fields.name = q.name.replace(/[\u0000-\u001f]/g, '').slice(0, 80);
+        if (typeof q.value_path === 'string' && /^[A-Za-z0-9_$][A-Za-z0-9_.$\[\]-]{0,199}$/.test(q.value_path)) fields.value_path = q.value_path;
+        if (typeof q.op === 'string' && TEMPLATES[template].ops.includes(q.op)) fields.op = q.op;
+        if (typeof q.value === 'string') fields.value = q.value.slice(0, 200);
+        return fields;
+    }
+
     r.get('/watches/new', (req, res) => {
         if (!signedIn(req)) return res.redirect(303, `/auth/login?next=${encodeURIComponent(req.originalUrl)}`);
         const template = getTemplate(req.query.template);
@@ -516,7 +530,7 @@ ${older ? html`<a class="btn" href="${older}">Older watches</a>` : html`<span cl
             body: html`<h1>New watch</h1>
 <p class="muted">${TEMPLATES[template].title}.</p>
 ${templateChooser(template)}
-${watchForm({ template, fields: { ...blankFields(template), url: String(req.query.url || '') }, errors: {}, action: '/watches/new', submit: 'Create this watch' })}`,
+${watchForm({ template, fields: prefilled(template, req.query), errors: {}, action: '/watches/new', submit: 'Create this watch' })}`,
         });
     });
 

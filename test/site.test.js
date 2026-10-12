@@ -141,6 +141,22 @@ t('notify me off stores an event action instead of a notification, and says so',
     assert.deepStrictEqual(read.body.watch.action, [{ kind: 'event', event_type: 'watch.watch.triggered' }]);
 });
 
+t('a link can start the form filled in, with bounded values only', async () => {
+    const q = new URLSearchParams({ template: 'json', url: 'https://openvibe.host/api/v1/catalog/plans/hpl_x', value_path: 'plan.price_monthly', op: 'changed', name: 'Linode Nanode 1GB price' });
+    const form = await svc.get(`/watches/new?${q}`, { cookie: session });
+    assert.strictEqual(form.status, 200);
+    assert.match(form.text, /value="https:\/\/openvibe\.host\/api\/v1\/catalog\/plans\/hpl_x"/);
+    assert.match(form.text, /value="plan\.price_monthly"/);
+    assert.match(form.text, /value="Linode Nanode 1GB price"/);
+    assert.match(form.text, /<option value="changed" selected/);
+    const odd = new URLSearchParams({ template: 'json', value_path: 'a b<script>', op: 'drop-table' });
+    const ignored = await svc.get(`/watches/new?${odd}`, { cookie: session });
+    assert.strictEqual(ignored.status, 200);
+    assert.doesNotMatch(ignored.text, /a b&lt;script&gt;|a b<script>/, 'a malformed path is dropped');
+    assert.doesNotMatch(ignored.text, /<option value="drop-table"/, 'an op the template does not have is dropped');
+    assert.match(ignored.text, /<option value="lt" selected/, 'the template default op stays selected');
+});
+
 t('the plain create and edit forms save an Actor agent action', async () => {
     const form = await svc.get('/watches/new?template=page', { cookie: session });
     assert.match(form.text, /Run one of my agents on OpenVibe\.Actor/);
