@@ -79,7 +79,8 @@
     "GET /api/v1/resources and GET /api/v1/resources/:ovrn (watch.resource.read)",
     "watch.* events through openvibe-sdk's service_outbox in the same transaction as the state change",
     "per-actor limits (openvibe-sdk/limits)",
+    "usage readings (check operations): one platform.usage-sample@1 check-operation reading per completed check run, relayed to OpenVibe.Billing (billing.usage.record) by openvibe-sdk/usage; off by default (WATCH_BILLING_INTERVAL_MS)",
     "the public site: Network sign-in (PKCE S256, web_sessions with only the token hash), server-rendered pages complete without JavaScript, the four create templates, watch management, observation history and check runs, how-it-works and the changelog, robots/sitemap/llms.txt"
   ],
-  "updated": "2026-10-12"
+  "updated": "2026-10-13"
 }

@@ -418,6 +418,7 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
 - OpenVibe.Network (signing key; service principal `watch`; grants `network.account.export.contribute` and
   `network.account.deletion.confirm` for account export and deletion, given last, once this release is live)
 - OpenVibe.Events (outbound events; the two account subscriptions, created at boot with `events.subscription.manage`)
+- OpenVibe.Billing (one `check-operation` usage reading per completed check, `POST /api/v1/usage` with `billing.usage.record`; off by default, `WATCH_BILLING_INTERVAL_MS`)
 
 ## Capabilities
 

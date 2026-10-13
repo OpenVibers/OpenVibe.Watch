@@ -3,6 +3,15 @@
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 
+## 2026-10-13 — check-operation usage readings (plan T5 step 14, Watch slice)
+
+- A completed check queues one `platform.usage-sample@1` reading (metric `check-operation`, quantity 1, unit `check`,
+  operation and provider the carrier, subject the owner, project only when the watch names one, cost the run's
+  `cost_usd`) in the transaction that records its run, keyed `watch:check:<run id>`; a failed check is not billed.
+- `server/billing.js` relays them to OpenVibe.Billing (`POST /api/v1/usage`, `billing.usage.record`) with the
+  `openvibe-sdk/usage` reporter; 400/422 rejects a reading, 429/5xx keeps it pending. `/api/ready` reports its counts.
+- Off by default (`WATCH_BILLING_INTERVAL_MS=0`). Migration `0008_billing_readings.sql`, `test/billing.test.js`.
+
 ## 2026-10-08 — account export and deletion (ADR-033)
 
 - `POST /internal/events` (loopback, `WATCH_EVENTS_SECRET`) answers network.account.export_requested and
