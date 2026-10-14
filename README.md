@@ -296,6 +296,7 @@ an app or module may not.
 | `watch.observation.read` | `GET /api/v1/watches/:id/observations?before=&limit=`, `GET /api/v1/watches/:id/checks?before=&limit=` |
 | `watch.check.run` | `POST /api/v1/watches/:id/check` (404 unknown, 409 `watch.busy` while one runs, 409 `watch.disabled` for a paused watch, 422 `watch.carrier_unavailable`, or 422 `watch.event_awaited` for an event source) |
 | `watch.resource.read` | `GET /api/v1/resources?project=&kind=&cursor=&limit=`, `GET /api/v1/resources/:ovrn` (first-party service token only) |
+| `watch.resource.control` | `POST /api/v1/resources/control` (first-party service token only; ADR-048, [server/api/resource-control.js](server/api/resource-control.js)): a `common.resource-control-request@1` for a watch from OpenVibe.Services acting for its owner (`on_behalf_of`) — `suspend` (pause), `resume`, `delete`; other actions refused `control.unsupported_action`; only the owner's watch in the OVRN's project (otherwise `resources.unknown_resource`); `dry_run` applies nothing; the first answer per (caller, project, `idempotency_key`) is kept (`watch_control_log`, migration 0009) and a key reused for another request is 409. Loopback only: the public vhost 404s `/api/v1/resources*`. |
 
 The loopback-only authority index lists non-deleted `watch.watch` resources as
 `common.resource-list-result@1`. It orders watches by id, pages with an opaque cursor, and

@@ -22,6 +22,7 @@ const { createSso } = require('./auth/sso');
 const { createPageRoutes } = require('./http/pages');
 const { watchesRouter } = require('./api/watches');
 const { resourceIndexRouter } = require('./api/resource-index');
+const { resourceControlRouter } = require('./api/resource-control');
 const { checksRouter } = require('./api/checks');
 const { createActorLimits } = require('./api/actor-limits');
 const { assetVersion, send, setRelease, SITE_NAME, TAGLINE } = require('./render/layout');
@@ -125,6 +126,8 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     const limits = createActorLimits({ config, now: limitsNow || (() => Date.now()), registry: metrics.registry, log });
     // OpenVibe.Services' resource index (watch.resource.read, service tokens only): read on loopback; the public vhost 404s it.
     app.use(resourceIndexRouter({ db, auth }));
+    // ...and its control API (watch.resource.control, ADR-048): suspend, resume and delete a person's watch.
+    app.use(resourceControlRouter({ db, auth, registry, now }));
     app.use(watchesRouter({ registry, auth, limits, webhookSources }));
     app.use(checksRouter({ registry, check, observations, auth, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'watch.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
