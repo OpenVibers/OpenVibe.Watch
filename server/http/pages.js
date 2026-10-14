@@ -955,12 +955,13 @@ ${watchForm({ template, fields, errors, action: `/watches/${id}/edit`, submit: '
 <p class="lede">A watch is a promise to look, not a promise to keep asking. Watch knows several ways to find out whether something changed, and it always takes the cheapest one the source allows.</p>
 <h2>The order</h2>
 <ol>
-<li><strong>An event or a webhook</strong> — when the thing can push to Watch, nothing is polled at all. (Not built yet: a watch of that kind is accepted but never fetched, and says so.)</li>
+<li><strong>An event or a webhook</strong> — when the thing can push to Watch, nothing is polled at all. An event watch is checked when its OpenVibe.Events event arrives; a webhook watch gets its own signed <code>/hooks/</code> address and is checked when a delivery reaches it.</li>
 <li><strong>The site's own ETag or Last-Modified</strong> — if the site gave one, the check carries <code>If-None-Match</code>/<code>If-Modified-Since</code>. A <code>304 Not Modified</code> means “no change” and no body is read.</li>
 <li><strong>A feed</strong> — an RSS or Atom feed is read before the page it describes, and the feed's own conditional headers apply.</li>
 <li><strong>An API</strong> — a JSON endpoint is read the same way, mapped by the watch itself.</li>
 <li><strong>A page</strong> — the page's text is read, as the whole body or one element.</li>
-<li><strong>An expensive browser check through OpenVibe.Run</strong> — the last resort, not built yet. A <code>run</code> watch is accepted but never fetched until it is.</li>
+<li><strong>Your own computer</strong> — for something on your home or office network (a router, a NAS, a printer page), one read-only check from your own machine through the OpenVibe Node, only where you turned that on for it.</li>
+<li><strong>An expensive browser check through OpenVibe.Run</strong> — the last resort. It waits for a browser worker, so a <code>run</code> watch is accepted but not checked yet, and says so on its page.</li>
 </ol>
 <h2>The manners</h2>
 <ul>
