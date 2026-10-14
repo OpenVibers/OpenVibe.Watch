@@ -103,6 +103,8 @@ function load(env = process.env) {
             actorUrl: (env.WATCH_ACTOR_URL || 'http://127.0.0.1:4950').replace(/\/+$/, ''),
             // OpenVibe.Run's internal address, for run-job actions (a job for the owner in the watch's project).
             runUrl: (env.WATCH_RUN_URL || 'http://127.0.0.1:4920').replace(/\/+$/, ''),
+            // OpenVibe.Codes' internal address, for codes-run actions (a coding task on the owner's own machine).
+            codesUrl: (env.WATCH_CODES_URL || 'http://127.0.0.1:4900').replace(/\/+$/, ''),
         },
 
         // Who may use which named secret (server/secret-grants.js): a WATCH_CRED_* credential (owners and the origins

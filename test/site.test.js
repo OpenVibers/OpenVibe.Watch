@@ -177,6 +177,25 @@ t('the plain create and edit forms save an Actor agent action', async () => {
     assert.strictEqual(updated.body.watch.action[0].note, 'New note.');
 });
 
+t('the plain create and edit forms save a coding task on the owner\'s machine (OpenVibe.Codes)', async () => {
+    const form = await svc.get('/watches/new?template=page', { cookie: session });
+    assert.match(form.text, /Start a coding task on my own machine/);
+    const bad = await create({ template: 'page', url: `${web.origin}/price`, cadence: '3600', codes_on: 'on', codes_repo: 'git@github.com:a/b.git', codes_brief: '' });
+    assert.strictEqual(bad.status, 422);
+    assert.match(bad.text, /https address/);
+    assert.match(bad.text, /Say what the coding task should do/);
+    const made = await create({ template: 'page', url: `${web.origin}/price`, cadence: '3600', codes_on: 'on', codes_repo: 'https://github.com/you/project', codes_brief: 'Update it and run the tests.' });
+    assert.strictEqual(made.status, 303);
+    const id = indexOf(made);
+    const view = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: ME });
+    assert.deepStrictEqual(view.body.watch.action, [{ kind: 'codes-run', repo: 'https://github.com/you/project', brief: 'Update it and run the tests.' }]);
+    const page = await svc.get(`/watches/${id}`, { cookie: session });
+    assert.match(page.text, /Coding task on <code>https:\/\/github\.com\/you\/project<\/code>/);
+    const edit = await svc.get(`/watches/${id}/edit`, { cookie: session });
+    assert.match(edit.text, /name="codes_on"[^>]*checked/);
+    assert.ok(edit.text.includes('Update it and run the tests.'));
+});
+
 t('validation errors re-render the form with the registry\'s message and the person\'s input', async () => {
     const badUrl = await create({ template: 'page', name: 'Keep me', url: 'not-a-url', selector: '.x', cadence: '3600' });
     assert.strictEqual(badUrl.status, 422);

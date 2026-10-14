@@ -17,6 +17,7 @@ const { createGuard } = require('./net/guard');
 const { createPoster } = require('./net/post');
 const { createActorTasks } = require('./actor');
 const { createProjects, createRunJobs } = require('./run-jobs');
+const { createCodesTasks } = require('./codes-tasks');
 const { createFetcher } = require('./net/fetcher');
 const { createSpacer } = require('./spacer');
 const { createCarriers } = require('./carriers');
@@ -41,7 +42,7 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, projects: givenProjects = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -59,7 +60,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const client = config.oauth.clientSecret
         ? createClient({
             tokenProvider: createServiceTokenClient({ network: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl }),
-            baseUrls: { network: config.networkInternalUrl, actor: config.actions.actorUrl, run: config.actions.runUrl }, fetch: fetchImpl,
+            baseUrls: { network: config.networkInternalUrl, actor: config.actions.actorUrl, run: config.actions.runUrl, codes: config.actions.codesUrl }, fetch: fetchImpl,
         })
         : null;
     // A watch that names a project: Network says whether its owner is an admin or owner of it, when it is saved (Run checks
@@ -79,7 +80,8 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     // Webhook actions leave through the same guard as every fetch (server/net/post.js).
     const post = givenPost || createPoster({ guard, userAgent: config.fetch.userAgent, timeoutMs: config.actions.webhookTimeoutMs });
     const runJobs = client ? createRunJobs(client, { baseUrl: config.actions.runUrl }) : null;
-    const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, actor: givenActor || actorTasks, run: givenRun || runJobs, now, log });
+    const codesTasks = client ? createCodesTasks(client, { baseUrl: config.actions.codesUrl }) : null;
+    const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, actor: givenActor || actorTasks, run: givenRun || runJobs, codes: givenCodes || codesTasks, now, log });
     const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions, now, log });
     const scheduler = createScheduler({ db, check, config, now, log });
     // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.

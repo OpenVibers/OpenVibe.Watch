@@ -62,6 +62,17 @@ const actor = {
         return { id: 'tsk_AGENT', state: 'queued' };
     },
 };
+// OpenVibe.Codes, as server/codes-tasks.js would reach it: every start recorded; codesMode decides the answer.
+const codesStarts = [];
+let codesMode = 'ok';
+const codes = {
+    async start(req) {
+        codesStarts.push(req);
+        if (codesMode === 'no_project') throw Object.assign(new Error('no /run task yet'), { status: 409, code: 'codes.no_project', detail: 'this person has not run a task on openvibe.codes/run yet' });
+        if (codesMode === 'busy') throw Object.assign(new Error('unavailable'), { status: 503, code: 'run.unavailable' });
+        return { id: 'tsk_01JAB2C3D4E5F6G7H8J9K0MNCD', state: 'queued', url: 'https://openvibe.codes/run/tasks/tsk_01JAB2C3D4E5F6G7H8J9K0MNCD', created: codesStarts.length === 1 };
+    },
+};
 const agentId = 'agt_01JAB2C3D4E5F6G7H8J9K0MNPQ';
 const def = (overrides = {}) => ({
     name: 'Widget price',
@@ -92,7 +103,7 @@ t('boot', async () => {
         '/set': (req, _res, ctx) => { price = ctx.url.searchParams.get('v') || price; return { body: 'ok' }; },
     });
     svc = await boot({
-        notifications, post, actor,
+        notifications, post, actor, codes,
         env: {
             WATCH_HOOK_TEST: HOOK_KEY, WATCH_HOOK_SHORT: 'too-short', WATCH_HOOK_THEIRS: HOOK_KEY,
             WATCH_SECRET_GRANTS: JSON.stringify({
@@ -104,7 +115,7 @@ t('boot', async () => {
 
 t('a check that does not fire queues nothing; one that fires queues each action once, with its run', async () => {
     mode = 'ok'; pushes.length = 0;
-    const w = await create(person, { action: [{ kind: 'notification', priority: 'high' }, { kind: 'codes-run', repo: 'OpenVibers/OpenVibe.Watch', brief: 'look into it' }] });
+    const w = await create(person, { action: [{ kind: 'notification', priority: 'high' }, { kind: 'event', event_type: 'watch.something.else' }] });
     await setPrice('19.99');
     await check(w.id);
     assert.deepStrictEqual(await acts(w.id), [], 'no trigger, no action');
@@ -112,7 +123,7 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     const out = await check(w.id);
     const rows = await acts(w.id);
     assert.deepStrictEqual(rows.map((r) => [r.kind, r.state, r.check_run_id, Number(r.action_index)]),
-        [['notification', 'queued', out.run.id, 0], ['codes-run', 'unavailable', out.run.id, 1]]);
+        [['notification', 'queued', out.run.id, 0], ['event', 'unavailable', out.run.id, 1]]);
     assert.match(rows[1].last_error, /watch\.action_unavailable/);
 
     const r = await svc.actions.tick();
@@ -313,6 +324,55 @@ t('an actor-task action gives Actor a task for the owner, with the firing as con
     assert.deepStrictEqual([b.state, /action_no_person/.test(b.last_error)], ['skipped', true]);
     await svc.actions.tick();
     assert.strictEqual(tasks.length, before, 'no task for an agent-owned watch');
+});
+
+t('a codes-run action starts a coding task for the owner on Codes, with the firing as context and one idempotency key', async () => {
+    codesStarts.length = 0; codesMode = 'busy';
+    const w = await create(person, { name: 'dependency bump', action: [{ kind: 'codes-run', repo: 'https://github.com/OpenVibers/OpenVibe.Watch', brief: 'Update the dependency and run the tests.' }] });
+    const out = await fire(w);
+    let r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 0, skipped: 0, retried: 1, failed: 0 }, 'a busy Codes is retried');
+    codesMode = 'ok';
+    await svc.db.prepare('UPDATE action_runs SET next_attempt_at = 0 WHERE watch_id = ?').run(w.id);
+    r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 1, skipped: 0, retried: 0, failed: 0 });
+    const [first, second] = codesStarts;
+    assert.strictEqual(first.subjectId, person.sub);
+    assert.strictEqual(first.repo, 'https://github.com/OpenVibers/OpenVibe.Watch');
+    assert.strictEqual(first.idempotencyKey, `watch.${out.run.id}.0`);
+    assert.strictEqual(second.idempotencyKey, first.idempotencyKey, 'the retry is the same task');
+    assert.match(first.prompt, /^Update the dependency and run the tests\.\n\nContext: your watch “dependency bump” fired at /);
+    assert.ok(first.prompt.length <= 8000);
+    const [row] = await acts(w.id);
+    assert.deepStrictEqual([row.state, row.last_error], ['sent', 'Codes task tsk_01JAB2C3D4E5F6G7H8J9K0MNCD https://openvibe.codes/run/tasks/tsk_01JAB2C3D4E5F6G7H8J9K0MNCD (already started)']);
+
+    codesMode = 'no_project';
+    const fresh = await create(person, { name: 'no project yet', action: [{ kind: 'codes-run', repo: 'https://github.com/a/b', brief: 'x' }] });
+    await fire(fresh);
+    r = await svc.actions.tick();
+    assert.deepStrictEqual(r, { sent: 0, skipped: 0, retried: 0, failed: 1 }, 'no /run task yet fails at once');
+    assert.match((await acts(fresh.id))[0].last_error, /watch\.action_refused: codes\.no_project/);
+    codesMode = 'ok';
+
+    const before = codesStarts.length;
+    const bot = await create(agent, { name: 'agent coding', action: [{ kind: 'codes-run', repo: 'https://github.com/a/b', brief: 'x' }] });
+    await fire(bot);
+    const [b] = await acts(bot.id);
+    assert.deepStrictEqual([b.state, /action_no_person/.test(b.last_error)], ['skipped', true]);
+    await svc.actions.tick();
+    assert.strictEqual(codesStarts.length, before, 'no task for an agent-owned watch');
+});
+
+t('server/codes-tasks.js asks Codes as Watch, for the owner, once', async () => {
+    const { createCodesTasks } = require('../server/codes-tasks');
+    const calls = [];
+    const client = { async json(o) { calls.push(o); return { task: { id: 'tsk_X', state: 'queued', url: 'https://openvibe.codes/run/tasks/tsk_X' }, created: true }; } };
+    const out = await createCodesTasks(client, { baseUrl: 'http://127.0.0.1:4900' }).start({ subjectId: person.sub, repo: 'https://github.com/a/b', prompt: 'do it', idempotencyKey: 'watch.r.0' });
+    assert.deepStrictEqual(out, { id: 'tsk_X', state: 'queued', url: 'https://openvibe.codes/run/tasks/tsk_X', created: true });
+    const c = calls[0];
+    assert.deepStrictEqual([c.service, c.baseUrl, c.audience, c.method, c.path, c.retries], ['codes', 'http://127.0.0.1:4900', 'openvibe.codes', 'POST', '/api/v1/tasks', 0]);
+    assert.deepStrictEqual(c.headers, { 'X-OV-Subject': person.sub });
+    assert.deepStrictEqual(c.json, { repo: 'https://github.com/a/b', prompt: 'do it', idempotency_key: 'watch.r.0' });
 });
 
 t('server/actor.js asks Actor as Watch, for the owner, once', async () => {

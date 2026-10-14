@@ -121,7 +121,7 @@ function createPageRoutes(ctx) {
             template, name: '', url: '', kind: t.kind,
             extraction: t.extraction, selector: '', value_path: t.valuePath || '',
             op: t.defaultOp || t.ops[0], value: '', for_sec: '',
-            cadence: '3600', notify: 'on', agent_on: '', agent_id: '', agent_note: '',
+            cadence: '3600', notify: 'on', agent_on: '', agent_id: '', agent_note: '', codes_on: '', codes_repo: '', codes_brief: '',
         };
     }
 
@@ -133,6 +133,7 @@ function createPageRoutes(ctx) {
         const fields = { ...blankFields(template), ...(body || {}) };
         fields.notify = body && body.notify === 'on' ? 'on' : '';
         fields.agent_on = body && body.agent_on === 'on' ? 'on' : '';
+        fields.codes_on = body && body.codes_on === 'on' ? 'on' : '';
         return fields;
     }
 
@@ -167,10 +168,14 @@ function createPageRoutes(ctx) {
             agent_on: agentAction(watch.action) ? 'on' : '',
             agent_id: (agentAction(watch.action) || {}).agent_id || '',
             agent_note: (agentAction(watch.action) || {}).note || '',
+            codes_on: codesAction(watch.action) ? 'on' : '',
+            codes_repo: (codesAction(watch.action) || {}).repo || '',
+            codes_brief: (codesAction(watch.action) || {}).brief || '',
         };
     }
     const notifyOn = (action) => Array.isArray(action) && action.some((a) => a && a.kind === 'notification');
     const agentAction = (action) => Array.isArray(action) ? action.find((a) => a && a.kind === 'actor-agent') : null;
+    const codesAction = (action) => Array.isArray(action) ? action.find((a) => a && a.kind === 'codes-run') : null;
 
     function actionsFrom(fields, errors) {
         const action = fields.notify === 'on' ? [...NOTIFY_ACTION] : [];
@@ -180,6 +185,16 @@ function createPageRoutes(ctx) {
             if (!/^agt_[0-9A-HJKMNP-TV-Z]{26}$/.test(agentId)) errors.agent_id = 'Give a valid Actor agent id (agt_ followed by 26 characters).';
             if (note.length > 2000) errors.agent_note = 'The note can be at most 2000 characters.';
             action.push({ kind: 'actor-agent', agent_id: agentId, ...(note ? { note } : {}) });
+        }
+        if (fields.codes_on === 'on') {
+            const repo = String(fields.codes_repo || '').trim();
+            const brief = String(fields.codes_brief || '').trim();
+            let ok = false;
+            try { const u = new URL(repo); ok = u.protocol === 'https:' && !u.username && !u.password && u.pathname.split('/').filter(Boolean).length >= 2; } catch { ok = false; }
+            if (!ok || repo.length > 300) errors.codes_repo = 'Give the repository\'s https address, for example https://github.com/you/project.';
+            if (!brief) errors.codes_brief = 'Say what the coding task should do when the watch fires.';
+            else if (brief.length > 6000) errors.codes_brief = 'The task can be at most 6000 characters.';
+            action.push({ kind: 'codes-run', repo, brief });
         }
         return action.length ? action : QUIET_ACTION;
     }
@@ -384,9 +399,12 @@ ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify =
 ${checkbox('Run one of my agents on OpenVibe.Actor', { name: 'agent_on', checked: fields.agent_on === 'on', hint: 'When the condition fires, Watch gives your agent the value and a link to this watch.' })}
 ${field('Agent id', html`<input type="text" id="${idOf('agent_id')}" name="agent_id" value="${fields.agent_id}" maxlength="30" placeholder="agt_…">`, { name: 'agent_id', error: errors.agent_id, hint: 'Find the id on your agent’s OpenVibe.Actor page. Required when running an agent.' })}
 ${field('Note for the agent (optional)', html`<textarea id="${idOf('agent_note')}" name="agent_note" maxlength="2000" rows="3">${fields.agent_note}</textarea>`, { name: 'agent_note', error: errors.agent_note })}
+${checkbox('Start a coding task on my own machine (OpenVibe.Codes)', { name: 'codes_on', checked: fields.codes_on === 'on', hint: 'When the condition fires, OpenVibe.Codes runs the task on your machine (add it on openvibe.bot/machines and start one task on openvibe.codes/run first), with the value and a link to this watch. You get the summary and the patch on its page.' })}
+${field('Repository', html`<input type="url" id="${idOf('codes_repo')}" name="codes_repo" value="${fields.codes_repo}" maxlength="300" placeholder="https://github.com/you/project">`, { name: 'codes_repo', error: errors.codes_repo })}
+${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="codes_brief" maxlength="6000" rows="3" placeholder="The dependency in the value changed: update it and run the tests.">${fields.codes_brief}</textarea>`, { name: 'codes_brief', error: errors.codes_brief })}
 </fieldset>
 <p class="form-actions"><button class="btn primary" type="submit">${submit}</button> <a href="/watches">Cancel</a></p>
-<p class="muted small">Notifications and Actor agents are delivered when the watch fires. Codes and Run actions are later steps.</p>
+<p class="muted small">Notifications, Actor agents and coding tasks are delivered when the watch fires.</p>
 </form>`;
     }
 
@@ -595,7 +613,9 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create 
         const acts = actions ? await actions.recent(row.id, 10) : [];
         const configuredActions = (v.action || []).map((a) => a.kind === 'actor-agent'
             ? html`<div>Run agent <a href="https://openvibe.actor/me/agents/${a.agent_id}"><code>${a.agent_id}</code></a>${a.note ? html` — ${a.note}` : ''}</div>`
-            : html`<div><code>${a.kind}</code></div>`);
+            : a.kind === 'codes-run'
+                ? html`<div>Coding task on <code>${a.repo}</code> (OpenVibe.Codes, on your machine) — ${String(a.brief || '').slice(0, 200)}</div>`
+                : html`<div><code>${a.kind}</code></div>`);
 
         const obsRows = obs.map((o) => [
             time(new Date(Number(o.observed_at)).toISOString()),
@@ -800,6 +820,7 @@ ${watchForm({ template: fields.template, fields, errors: {}, action: `/watches/$
         const fields = { ...fieldsOfWatch(registry.view(row)), ...(req.body || {}) };
         fields.notify = req.body && req.body.notify === 'on' ? 'on' : '';
         fields.agent_on = req.body && req.body.agent_on === 'on' ? 'on' : '';
+        fields.codes_on = req.body && req.body.codes_on === 'on' ? 'on' : '';
         const built = buildBody(fields, template);
         let errors = built.errors;
         if (!errors) {
