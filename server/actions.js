@@ -47,8 +47,14 @@
  *                  413, 422: an invalid job, a project the owner may no longer use, over the project's caps) is
  *                  `failed` at once; anything else, Run or Network unreachable included, is retried on the backoff.
  *                  It needs a person as owner and a project: otherwise `skipped` / `unavailable`.
- *   codes-run      `unavailable` with `watch.action_unavailable`: its dispatcher is a later step of the plan, and the
- *                  watch page says so rather than pretending it ran.
+ *   codes-run      a coding task on OpenVibe.Codes for the owner, on the owner's own machine (server/codes-tasks.js):
+ *                  the action's brief with the firing as context, in the repository it names. Watch starts it as itself
+ *                  with the owner in X-OV-Subject (Contracts 0.162 codes.task.start); the key
+ *                  `watch.<check run>.<action index>` makes a retried delivery the same task. Created (or the same task
+ *                  again) is `sent` with the task's page. A refusal a retry cannot change (400, 403, 404, 409 — the owner
+ *                  has not used openvibe.codes/run yet, codes.no_project — 413, 422) is `failed` at once; anything
+ *                  else is retried on the backoff. It needs a person as owner: an agent- or service-owned watch is
+ *                  `skipped`.
  *
  * The worker claims due rows with a short lease (FOR UPDATE SKIP LOCKED, next_attempt_at moved past the lease), so
  * two processes never deliver one row at the same time, and a process that dies mid-delivery leaves the row to the
@@ -64,7 +70,7 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3600_000, 6 * 3600_000]
 const LEASE_MS = 2 * 60_000;
 const TITLE_MAX = 120;
 const MESSAGE_MAX = 300;
-const LATER = new Set(['codes-run']);
+const LATER = new Set();
 // Run's answers that a retry cannot change: the job is invalid, over the project's caps, or the owner may no longer
 // act in the project (403 project.not_delegated / capability.denied).
 const RUN_FINAL = new Set([400, 403, 404, 409, 413, 422]);
@@ -124,6 +130,13 @@ function actorTaskFor({ config, watch, action, value, previousValue, observedAt 
     return `${brief.slice(0, TASK_MAX - context.length - 2)}\n\n${context}`;
 }
 
+/** A codes-run action's prompt: the brief, then the firing (at most Codes' 8000 characters). */
+function codesTaskFor({ config, watch, action, value, previousValue, observedAt }) {
+    const context = actorContextFor({ config, watch, value, previousValue, observedAt }, 1500);
+    const brief = String(action.brief || '').trim();
+    return `${brief.slice(0, 8000 - context.length - 2)}\n\n${context}`;
+}
+
 function actorContextFor({ config, watch, value, previousValue, observedAt }, maxLength = Infinity) {
     const now = valueText(value);
     const before = previousValue === undefined || previousValue === null ? null : valueText(previousValue);
@@ -164,7 +177,7 @@ function actorAgentInputFor(args) {
     return prefix + actorContextFor(args, 8000 - prefix.length);
 }
 
-function createActions({ db, config, notifications = null, post = null, actor = null, run: runJobs = null, now = () => Date.now(), log = console }) {
+function createActions({ db, config, notifications = null, post = null, actor = null, run: runJobs = null, codes = null, now = () => Date.now(), log = console }) {
     // Read at each use, not once: what a process was started with is what it enforces, for rows queued before it too.
     const grants = () => config.secretGrants;
     const enabled = Boolean(notifications) && config.actions.enabled;
@@ -216,6 +229,9 @@ function createActions({ db, config, notifications = null, post = null, actor = 
                 if (!USER_SUBJECT.test(String(owner || ''))) { state = 'skipped'; error = 'watch.action_no_person: a Run job is started for a person in their project, and this watch belongs to an agent or a service'; }
                 else if (!PROJECT_ID.test(String(watch.project_id || ''))) { state = 'unavailable'; error = 'watch.project_required: a run-job action is billed to the watch\'s project, and this watch names none'; }
                 else request = { project_id: watch.project_id, job: runJobFor({ config, watch, run, action, value, previousValue, observedAt }) };
+            } else if (kind === 'codes-run') {
+                if (USER_SUBJECT.test(String(owner || ''))) request = { repo: String(action.repo || ''), prompt: codesTaskFor({ config, watch, action, value, previousValue, observedAt }) };
+                else { state = 'skipped'; error = 'watch.action_no_person: a coding task runs on a person\'s own machine, and this watch belongs to an agent or a service'; }
             } else if (LATER.has(kind)) {
                 state = 'unavailable'; error = `watch.action_unavailable: ${kind} actions are a later step (plan T18)`;
             } else {
@@ -295,12 +311,24 @@ function createActions({ db, config, notifications = null, post = null, actor = 
         }
     }
 
+    async function deliverCodesRun(row, request) {
+        if (!codes) throw Object.assign(new Error('Codes delivery is not configured in this process'), { code: 'codes_unconfigured' });
+        try {
+            const task = await codes.start({ subjectId: row.owner_sub, repo: request.repo, prompt: request.prompt, idempotencyKey: `watch.${row.check_run_id}.${row.action_index}` });
+            return { state: 'sent', error: `Codes task ${task.id || '(no id)'}${task.url ? ` ${task.url}` : ''}${task.created ? '' : ' (already started)'}` };
+        } catch (err) {
+            if (err && RUN_FINAL.has(err.status)) return { state: 'failed', error: `watch.action_refused: ${err.code || err.status}: ${String(err.detail || err.message || '').slice(0, 200)}` };
+            throw err;
+        }
+    }
+
     async function deliver(row, attempt) {
         const request = typeof row.request === 'string' ? JSON.parse(row.request) : row.request;
         if (row.kind === 'webhook') return await deliverWebhook(row, request, attempt);
         if (row.kind === 'actor-task') return await deliverActorTask(row, request);
         if (row.kind === 'actor-agent') return await deliverActorAgent(row, request);
         if (row.kind === 'run-job') return await deliverRunJob(row, request);
+        if (row.kind === 'codes-run') return await deliverCodesRun(row, request);
         if (row.kind !== 'notification') return { state: 'unavailable', error: `watch.action_unavailable: ${row.kind}` };
         const out = await notifications.push({ subjectId: row.owner_sub, ...request });
         if (out.sent) return { state: 'sent', error: out.skipped ? 'delivered; the person switched this category off' : null };
