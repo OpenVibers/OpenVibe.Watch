@@ -196,6 +196,36 @@ t('the plain create and edit forms save a coding task on the owner\'s machine (O
     assert.ok(edit.text.includes('Update it and run the tests.'));
 });
 
+t('the event template: a channel going live (or a blog post) wakes the watch, with an Actor agent as its action', async () => {
+    const form = await svc.get('/watches/new?template=event', { cookie: session });
+    assert.strictEqual(form.status, 200);
+    assert.match(form.text, /A channel goes live on OpenVibe\.Live/);
+    assert.doesNotMatch(form.text, /name="url"/, 'no address to give');
+    const made = await create({ template: 'event', name: 'goosely is live', event: 'live.stream.started', event_filter: 'goosely', notify: '', agent_on: 'on', agent_id: agentId, agent_note: 'Clip the first minute.' });
+    assert.strictEqual(made.status, 303, made.text);
+    const id = indexOf(made);
+    const view = await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token: ME });
+    const w = view.body.watch;
+    assert.deepStrictEqual(w.source, { kind: 'event', pattern: 'live.stream.started', filter: { channel: 'goosely' } });
+    assert.strictEqual(w.cadence, null);
+    assert.deepStrictEqual(w.extraction, { kind: 'json', value_path: 'payload.stream_id' });
+    assert.deepStrictEqual(w.condition, { op: 'changed' });
+    assert.deepStrictEqual(w.action, [{ kind: 'actor-agent', agent_id: agentId, note: 'Clip the first minute.' }]);
+    const edit = await svc.get(`/watches/${id}/edit`, { cookie: session });
+    assert.match(edit.text, /value="goosely"/);
+    assert.match(edit.text, /<option value="live\.stream\.started" selected/);
+    const any = await create({ template: 'event', event: 'blog.post.published', event_filter: '' });
+    assert.strictEqual(any.status, 303);
+    const anyView = await request(svc.base, 'GET', `/api/v1/watches/${indexOf(any)}`, { token: ME });
+    assert.deepStrictEqual(anyView.body.watch.source, { kind: 'event', pattern: 'blog.post.published', filter: null });
+    const linked = await svc.get(`/watches/new?template=event&agent_id=${agentId}&event=blog.post.published`, { cookie: session });
+    assert.match(linked.text, /name="agent_on"[^>]*checked/);
+    assert.ok(linked.text.includes(`value="${agentId}"`));
+    assert.match(linked.text, /<option value="blog\.post\.published" selected/);
+    const bad = await create({ template: 'event', event: 'network.account.deleted' });
+    assert.strictEqual(bad.status, 422, 'only the offered public events');
+});
+
 t('validation errors re-render the form with the registry\'s message and the person\'s input', async () => {
     const badUrl = await create({ template: 'page', name: 'Keep me', url: 'not-a-url', selector: '.x', cadence: '3600' });
     assert.strictEqual(badUrl.status, 422);
