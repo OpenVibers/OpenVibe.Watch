@@ -84,12 +84,19 @@ function inWords(watch) {
         what = e.value_path ? html`${extractionWords(watch.extraction)} of the newest item of the feed` : 'the newest item of the feed';
     } else if (source.kind === 'webhook') {
         what = path ? html`the value at <code>${path}</code> in a webhook delivery` : (e.kind === 'text' ? 'what a webhook delivery says' : 'a webhook delivery');
+    } else if (source.kind === 'node') {
+        const target = (source.probe && source.probe.target) || '';
+        what = /^tcp:/.test(target) ? html`<b>${host(target)}</b>, seen from your computer,` : html`${extractionWords(watch.extraction)} on <b>${host(target)}</b>, seen from your computer,`;
     } else if (source.kind === 'event') {
         what = path ? html`the value at <code>${path}</code> of a <b>${source.pattern}</b> event` : html`a <b>${source.pattern}</b> event`;
     } else {
         what = html`${extractionWords(watch.extraction)} on <b>${host(source.url)}</b>`;
     }
     const every = watch.cadence ? `, checked ${everyWords(watch.cadence.every_sec)}` : '';
+    const c = watch.condition || {};
+    if (source.kind === 'node' && /^tcp:/.test((source.probe && source.probe.target) || '') && c.op === 'eq' && c.value === 'down') {
+        return html`Tell me when <b>${host(source.probe.target)}</b> stops answering, seen from your computer${every}.`;
+    }
     return html`Tell me when ${what} ${conditionWords(watch.condition)}${every}.`;
 }
 

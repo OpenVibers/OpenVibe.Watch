@@ -222,7 +222,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         const state = url ? (await st.endpoint.get(watch.id, url)) || {} : {};
         let out;
         try {
-            out = await choice.run({ watch, state, now, input });
+            out = await choice.run({ watch, state, now, input, owner: row.owner_sub });
         } catch (err) {
             log.error(`[check] ${watch.id}: carrier ${carrier} crashed: ${err.stack || err}`);
             out = { state: 'http_error', error_code: 'internal', detail: 'the carrier failed unexpectedly' };

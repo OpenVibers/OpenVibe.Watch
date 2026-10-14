@@ -14,8 +14,8 @@
  *                     server/event-sources.js); a check with no event (Check now) answers watch.event_awaited
  *   webhook           step 5: a signed POST to /hooks/<watch id> runs the check with the delivery (carriers/webhook.js,
  *                     server/webhook-sources.js); a check with no delivery (Check now) answers watch.webhook_awaited
+ *   node              step 7: a probe from the owner's own machine, through OpenVibe.Bot (carriers/node.js, contracts 0.167)
  *   run               step 6
- *   node              step 7
  *
  * A kind whose carrier is not built yet is accepted by the registry (a watch may be defined before
  * its transport exists) but is NEVER fetched: choose() answers `watch.carrier_unavailable`, the
@@ -27,14 +27,14 @@ const { createFeedCarrier } = require('./feed');
 const { createApiCarrier } = require('./api');
 const { createEventCarrier } = require('./event');
 const { createWebhookCarrier } = require('./webhook');
+const { createNodeCarrier } = require('./node');
 
 /** The documented order. A source kind fixes its carrier; this is the order a watch would prefer. */
-const PREFERENCE = ['event', 'webhook', 'http', 'feed', 'api'];
+const PREFERENCE = ['event', 'webhook', 'http', 'feed', 'api', 'node'];
 
 /** The step of plan T18 that carries each kind this release does not. */
 const LATER = {
     run: { step: 6, note: 'browser polling goes through OpenVibe.Run only after every cheaper rung was unavailable' },
-    node: { step: 7, note: 'a node probe observes a local/LAN thing through OpenVibe.Node' },
 };
 
 function unavailable(kind) {
@@ -48,13 +48,14 @@ function unavailable(kind) {
     };
 }
 
-function createCarriers({ fetcher, config, log = console }) {
+function createCarriers({ fetcher, config, log = console, machines = null }) {
     const carriers = {
         http: createHttpCarrier({ fetcher, config, log }),
         feed: createFeedCarrier({ fetcher, config, log }),
         api: createApiCarrier({ fetcher, config, log }),
         event: createEventCarrier(),
         webhook: createWebhookCarrier(),
+        node: createNodeCarrier({ machines }),
     };
 
     /**

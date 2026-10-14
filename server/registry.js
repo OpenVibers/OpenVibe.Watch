@@ -114,6 +114,15 @@ function validateRequest(body, { create = false } = {}) {
             if (cadence.every_sec < MIN_EVERY_SEC) throw new RegistryError(`cadence.every_sec must be at least ${MIN_EVERY_SEC} seconds (15 minutes)`);
         }
         if (PUSHED.has(kind) && cadence) throw new RegistryError(`a ${kind} source is pushed to and never polls: cadence must be null`);
+        if (kind === 'node') {
+            // A probe from the owner's own machine (carriers/node.js): the machine by its OpenVibe.Bot id, and one target on
+            // its network. The machine refuses anything that is not private, loopback or link-local.
+            if (!/^dev_[0-9A-HJKMNP-TV-Z]{26}$/.test(String(body.source.node_id || ''))) throw new RegistryError('/source/node_id must be one of your machines on OpenVibe.Bot (dev_…)');
+            const probe = body.source.probe || {};
+            if (typeof probe.target !== 'string' || !/^(https?|tcp):\/\/[^\s]{3,2040}$/.test(probe.target)) throw new RegistryError('/source/probe/target must be http(s)://… or tcp://host:port on the machine\'s own network');
+            if (probe.timeout_s !== undefined && (!Number.isInteger(probe.timeout_s) || probe.timeout_s < 1 || probe.timeout_s > 30)) throw new RegistryError('/source/probe/timeout_s is 1 to 30');
+            for (const k of Object.keys(probe)) if (!['target', 'timeout_s'].includes(k)) throw new RegistryError(`/source/probe/${k} is not known (target, timeout_s)`);
+        }
         // A HEAD source states no body, so only a document/record extraction can read one: refuse
         // the misconfiguration here instead of recording `parse_error` on every check.
         if (body.source.method === 'HEAD' && !['json', 'jsonpath'].includes((body.extraction || {}).kind)) {

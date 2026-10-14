@@ -105,6 +105,8 @@ function load(env = process.env) {
             runUrl: (env.WATCH_RUN_URL || 'http://127.0.0.1:4920').replace(/\/+$/, ''),
             // OpenVibe.Codes' internal address, for codes-run actions (a coding task on the owner's own machine).
             codesUrl: (env.WATCH_CODES_URL || 'http://127.0.0.1:4900').replace(/\/+$/, ''),
+            // OpenVibe.Bot's internal address, for node sources (a probe from the owner's own machine).
+            botUrl: (env.WATCH_BOT_URL || 'http://127.0.0.1:4630').replace(/\/+$/, ''),
         },
 
         // Who may use which named secret (server/secret-grants.js): a WATCH_CRED_* credential (owners and the origins

@@ -18,6 +18,7 @@ const { createPoster } = require('./net/post');
 const { createActorTasks } = require('./actor');
 const { createProjects, createRunJobs } = require('./run-jobs');
 const { createCodesTasks } = require('./codes-tasks');
+const { createMachines } = require('./machines');
 const { createFetcher } = require('./net/fetcher');
 const { createSpacer } = require('./spacer');
 const { createCarriers } = require('./carriers');
@@ -43,7 +44,7 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -61,7 +62,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const client = config.oauth.clientSecret
         ? createClient({
             tokenProvider: createServiceTokenClient({ network: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl }),
-            baseUrls: { network: config.networkInternalUrl, actor: config.actions.actorUrl, run: config.actions.runUrl, codes: config.actions.codesUrl }, fetch: fetchImpl,
+            baseUrls: { network: config.networkInternalUrl, actor: config.actions.actorUrl, run: config.actions.runUrl, codes: config.actions.codesUrl, bot: config.actions.botUrl }, fetch: fetchImpl,
         })
         : null;
     // A watch that names a project: Network says whether its owner is an admin or owner of it, when it is saved (Run checks
@@ -75,7 +76,9 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const fetcher = createFetcher({ guard, userAgent: config.fetch.userAgent, timeoutMs: config.fetch.timeoutMs, maxBytes: config.fetch.maxBytes, maxRedirects: config.fetch.maxRedirects });
     const spacer = createSpacer({ hostMinIntervalMs: config.fetch.hostMinIntervalMs });
     // Every carrier goes out through the spacer, so two watches over one host never hammer it.
-    const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log });
+    // A node source probes from its owner's own machine through OpenVibe.Bot (carriers/node.js).
+    const machines = givenMachines || (client ? createMachines(client, { baseUrl: config.actions.botUrl }) : null);
+    const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log, machines });
     const notifications = client ? createNotificationsClient(client) : null;
     const actorTasks = client ? createActorTasks(client, { baseUrl: config.actions.actorUrl }) : null;
     // Webhook actions leave through the same guard as every fetch (server/net/post.js).

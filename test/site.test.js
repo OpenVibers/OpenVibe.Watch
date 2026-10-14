@@ -226,6 +226,33 @@ t('the event template: a channel going live (or a blog post) wakes the watch, wi
     assert.strictEqual(bad.status, 422, 'only the offered public events');
 });
 
+t('the network template: a device at home stops answering, checked from the person\'s own machine', async () => {
+    // A second person, so this test's writes do not count against the first one's budget of 30 a minute.
+    const owner = svc.network.addUser('lan-owner');
+    const own = await svc.signIn(owner);
+    const create = (fields) => svc.get('/watches/new', { cookie: own, form: fields });
+    const ME = userToken(owner.subject);
+    const session = own;
+    const form = await svc.get('/watches/new?template=lan', { cookie: session });
+    assert.strictEqual(form.status, 200);
+    assert.match(form.text, /name="machine"/);
+    assert.match(form.text, /name="lan_address"/);
+    assert.match(form.text, /openvibe\.bot\/machines/);
+    const made = await create({ template: 'lan', name: 'The NAS', machine: 'dev_01M4XTHNFFAWWZQHB4XTMSN1YB', lan_address: '192.168.1.20:5000', cadence: '3600', notify: 'on' });
+    assert.strictEqual(made.status, 303, made.text);
+    const w = (await request(svc.base, 'GET', `/api/v1/watches/${indexOf(made)}`, { token: ME })).body.watch;
+    assert.deepStrictEqual(w.source, { kind: 'node', node_id: 'dev_01M4XTHNFFAWWZQHB4XTMSN1YB', probe: { target: 'tcp://192.168.1.20:5000', timeout_s: 10 } });
+    assert.deepStrictEqual([w.extraction, w.condition], [{ kind: 'json', value_path: 'status' }, { op: 'eq', value: 'down' }]);
+    const page = await svc.get(`/watches/${indexOf(made)}`, { cookie: session });
+    assert.match(page.text, /192\.168\.1\.20:5000<\/b> stops answering, seen from your computer/);
+    const edit = await svc.get(`/watches/${indexOf(made)}/edit`, { cookie: session });
+    assert.match(edit.text, /value="192\.168\.1\.20:5000"/);
+    const bad = await create({ template: 'lan', machine: 'nope', lan_address: 'not an address', cadence: '3600' });
+    assert.strictEqual(bad.status, 422);
+    assert.match(bad.text, /openvibe\.bot\/machines \(dev_/);
+    assert.match(bad.text, /address and port/);
+});
+
 t('validation errors re-render the form with the registry\'s message and the person\'s input', async () => {
     const badUrl = await create({ template: 'page', name: 'Keep me', url: 'not-a-url', selector: '.x', cadence: '3600' });
     assert.strictEqual(badUrl.status, 422);

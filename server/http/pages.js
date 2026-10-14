@@ -85,6 +85,16 @@ const TEMPLATES = {
         defaultOp: 'changed',
         extraction: 'json',
     },
+    lan: {
+        card: 'Something on your network goes down',
+        cardBlurb: 'A NAS, a printer, a camera or a game server at home: your own computer checks that its port answers, and Watch tells you when it stops. Nothing on your network is opened to the internet.',
+        title: 'Watch something on your own network',
+        kind: 'node',
+        kindWords: 'a device on your own network',
+        ops: ['eq'],
+        extraction: 'json',
+        valuePath: 'status',
+    },
 };
 const TEMPLATE_NAMES = Object.keys(TEMPLATES);
 // The public events the event template offers (Contracts: each is `public`, so any watch may read it): which payload
@@ -140,7 +150,7 @@ function createPageRoutes(ctx) {
             extraction: t.extraction, selector: '', value_path: t.valuePath || '',
             op: t.defaultOp || t.ops[0], value: '', for_sec: '',
             cadence: '3600', notify: 'on', agent_on: '', agent_id: '', agent_note: '', codes_on: '', codes_repo: '', codes_brief: '',
-            event: EVENT_CHOICES[0].value, event_filter: '',
+            event: EVENT_CHOICES[0].value, event_filter: '', machine: '', lan_address: '',
         };
     }
 
@@ -161,6 +171,7 @@ function createPageRoutes(ctx) {
         const kind = watch.source && watch.source.kind;
         if (kind === 'webhook') return 'webhook';
         if (kind === 'event') return 'event';
+        if (kind === 'node') return 'lan';
         if (kind === 'feed') return 'feed';
         if (kind === 'api') return 'json';
         const e = watch.extraction || {};
@@ -192,6 +203,8 @@ function createPageRoutes(ctx) {
             codes_repo: (codesAction(watch.action) || {}).repo || '',
             codes_brief: (codesAction(watch.action) || {}).brief || '',
             event: (watch.source && watch.source.kind === 'event' && watch.source.pattern) || EVENT_CHOICES[0].value,
+            machine: (watch.source && watch.source.kind === 'node' && watch.source.node_id) || '',
+            lan_address: (watch.source && watch.source.kind === 'node' && watch.source.probe && String(watch.source.probe.target || '').replace(/^tcp:\/\//, '')) || '',
             event_filter: (() => {
                 const c = eventChoice(watch.source && watch.source.pattern);
                 const f = watch.source && watch.source.filter;
@@ -271,6 +284,28 @@ function createPageRoutes(ctx) {
                 cadence: null,
                 extraction: { kind: 'json', value_path: ev.valuePath },
                 condition: { op: 'changed' },
+                action,
+            };
+            if (name) body.name = name;
+            return { body };
+        }
+        // A watch on the person's own network: their machine checks that host:port answers (carriers/node.js).
+        if (template === 'lan') {
+            const name = String(fields.name == null ? '' : fields.name).trim();
+            if (name.length > 120) errors.name = 'A name can be at most 120 characters.';
+            const machine = String(fields.machine || '').trim();
+            if (!/^dev_[0-9A-HJKMNP-TV-Z]{26}$/.test(machine)) errors.machine = 'Give your machine\'s id from openvibe.bot/machines (dev_ followed by 26 characters).';
+            const address = String(fields.lan_address || '').trim();
+            if (!/^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]{1,253}):\d{1,5}$/.test(address) || Number(address.split(':').pop()) > 65535) errors.lan_address = 'Give the device\'s address and port, for example 192.168.1.20:80 or nas.local:5000.';
+            const cadenceSec = INT(fields.cadence, 3600);
+            if (cadenceSec < W.MIN_CADENCE_SEC) errors.cadence = 'The shortest cadence here is 15 minutes.';
+            if (cadenceSec > 2592000) errors.cadence = 'The longest cadence is 30 days.';
+            if (Object.keys(errors).length) return { errors };
+            const body = {
+                source: { kind: 'node', node_id: machine, probe: { target: `tcp://${address}`, timeout_s: 10 } },
+                cadence: { every_sec: cadenceSec, jitter_sec: 0 },
+                extraction: { kind: 'json', value_path: 'status' },
+                condition: { op: 'eq', value: 'down' },
                 action,
             };
             if (name) body.name = name;
@@ -392,14 +427,18 @@ ${error ? html`<span class="field-error" role="alert">${error}</span>` : ''}
             : html`<input type="hidden" name="op" value="${t.ops[0]}"><span class="fixed">fires when it ${OPS[t.ops[0]]}</span>`;
 
         const needsValue = t.ops.some((op) => NEEDS_VALUE.has(op));
-        const conditionBlock = html`<fieldset><legend>When should it fire?</legend>
+        const conditionBlock = template === 'lan'
+            ? html`<fieldset><legend>When should it fire?</legend>
+<p class="muted small">When the address stops accepting connections, seen from your machine. It fires once each time it goes down.</p>
+</fieldset>`
+            : html`<fieldset><legend>When should it fire?</legend>
 ${field('Condition', opControl, { name: 'op', error: errors.op })}
 ${needsValue ? field('Value', html`<input type="text" id="${idOf('value')}" name="value" value="${fields.value}" maxlength="200">`, { name: 'value', error: errors.value, hint: 'The value to compare the reading against. Numbers are compared as numbers.' }) : ''}
 ${(template === 'price' || template === 'json') ? field('Hold for (seconds)', html`<input type="number" id="${idOf('for_sec')}" name="for_sec" value="${fields.for_sec}" min="0" max="2592000" inputmode="numeric">`, { name: 'for_sec', error: errors.for_sec, hint: 'Blank fires as soon as the condition is met; a number makes it wait that long and stay true.' }) : ''}
 </fieldset>`;
 
         let extractionBlock;
-        if (template === 'event') {
+        if (template === 'event' || template === 'lan') {
             extractionBlock = '';
         } else if (template === 'webhook') {
             extractionBlock = html`<fieldset><legend>What should it read?</legend>
@@ -426,7 +465,13 @@ ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="v
 
         const pushed = template === 'webhook' || template === 'event';
         const chosen = eventChoice(fields.event) || EVENT_CHOICES[0];
-        const whatBlock = template === 'event'
+        const whatBlock = template === 'lan'
+            ? html`<fieldset><legend>What to watch</legend>
+${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. The NAS">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the address.' })}
+${field('Your machine', html`<input type="text" id="${idOf('machine')}" name="machine" value="${fields.machine}" maxlength="30" placeholder="dev_…" required>`, { name: 'machine', error: errors.machine, hint: html`A computer on that network with OpenVibe Node and its computer plugin: copy its id from <a href="https://openvibe.bot/machines">openvibe.bot/machines</a>, where you also turn on “Let my watches check things from this computer”.` })}
+${field('Address and port', html`<input type="text" id="${idOf('lan_address')}" name="lan_address" value="${fields.lan_address}" maxlength="260" placeholder="192.168.1.20:80" required>`, { name: 'lan_address', error: errors.lan_address, hint: 'On your own network only (a private or local address): your machine checks that it accepts a connection.' })}
+</fieldset>`
+            : template === 'event'
             ? html`<fieldset><legend>What to watch</legend>
 ${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. When goosely goes live">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the event.' })}
 ${field('When', select('event', EVENT_CHOICES.map((e) => ({ value: e.value, label: e.label })), fields.event), { name: 'event', error: errors.event, hint: 'It fires the moment OpenVibe.Events delivers it, once per occurrence. Nothing is polled.' })}
