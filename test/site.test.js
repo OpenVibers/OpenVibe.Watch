@@ -56,6 +56,8 @@ t('the signed-out pages say what Watch is and ask for a sign-in', async () => {
     assert.strictEqual(how.status, 200);
     assert.match(how.text, /If-None-Match/);
     assert.match(how.text, /15 minutes/);
+    assert.match(how.text, /signed <code>\/hooks\/<\/code> address/, 'event and webhook watches are built: the page says how they run');
+    assert.doesNotMatch(how.text, /Not built yet/);
 });
 
 t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () => {
