@@ -66,6 +66,15 @@ const TEMPLATES = {
         defaultOp: 'lt',
         extraction: 'json',
     },
+    event: {
+        card: 'Something happens on OpenVibe',
+        cardBlurb: 'A channel goes live, a new blog post, a wiki page published: fire the moment its event arrives. Nothing is polled. Pair it with one of your Actor agents or a coding task.',
+        title: 'Watch for an OpenVibe event',
+        kind: 'event',
+        kindWords: 'an OpenVibe event',
+        ops: ['changed'],
+        extraction: 'json',
+    },
     webhook: {
         card: 'A webhook arrives',
         cardBlurb: 'Get an address for anything that can call a webhook (GitHub, a store, a CI) and fire on what it sends: nothing is polled.',
@@ -78,6 +87,15 @@ const TEMPLATES = {
     },
 };
 const TEMPLATE_NAMES = Object.keys(TEMPLATES);
+// The public events the event template offers (Contracts: each is `public`, so any watch may read it): which payload
+// field narrows it, and which field is new on every occurrence (so `changed` fires once per occurrence).
+const EVENT_CHOICES = [
+    { value: 'live.stream.started', label: 'A channel goes live on OpenVibe.Live', filterKey: 'channel', filterLabel: 'Channel (username, blank: any channel)', valuePath: 'payload.stream_id' },
+    { value: 'live.stream.ended', label: 'A channel’s stream ends on OpenVibe.Live', filterKey: 'channel', filterLabel: 'Channel (username, blank: any channel)', valuePath: 'payload.stream_id' },
+    { value: 'blog.post.published', label: 'A new post on OpenVibe.Blog', filterKey: 'blog', filterLabel: 'Blog (blank: any blog)', valuePath: 'payload.canonical_url' },
+    { value: 'wiki.page.published', label: 'A page is published on OpenVibe.Wiki', filterKey: 'space', filterLabel: 'Space (blank: any space)', valuePath: 'payload.canonical_url' },
+];
+const eventChoice = (v) => EVENT_CHOICES.find((e) => e.value === v) || null;
 const OPS = {
     changed: 'changes', gt: 'goes above', gte: 'reaches or is more than', lt: 'drops below', lte: 'is less than or equal to',
     eq: 'equals', ne: 'is not', contains: 'contains', matches: 'matches the pattern', exists: 'is present', absent: 'is absent',
@@ -122,6 +140,7 @@ function createPageRoutes(ctx) {
             extraction: t.extraction, selector: '', value_path: t.valuePath || '',
             op: t.defaultOp || t.ops[0], value: '', for_sec: '',
             cadence: '3600', notify: 'on', agent_on: '', agent_id: '', agent_note: '', codes_on: '', codes_repo: '', codes_brief: '',
+            event: EVENT_CHOICES[0].value, event_filter: '',
         };
     }
 
@@ -141,6 +160,7 @@ function createPageRoutes(ctx) {
     function templateOf(watch) {
         const kind = watch.source && watch.source.kind;
         if (kind === 'webhook') return 'webhook';
+        if (kind === 'event') return 'event';
         if (kind === 'feed') return 'feed';
         if (kind === 'api') return 'json';
         const e = watch.extraction || {};
@@ -171,6 +191,12 @@ function createPageRoutes(ctx) {
             codes_on: codesAction(watch.action) ? 'on' : '',
             codes_repo: (codesAction(watch.action) || {}).repo || '',
             codes_brief: (codesAction(watch.action) || {}).brief || '',
+            event: (watch.source && watch.source.kind === 'event' && watch.source.pattern) || EVENT_CHOICES[0].value,
+            event_filter: (() => {
+                const c = eventChoice(watch.source && watch.source.pattern);
+                const f = watch.source && watch.source.filter;
+                return c && f && typeof f[c.filterKey] === 'string' ? f[c.filterKey] : '';
+            })(),
         };
     }
     const notifyOn = (action) => Array.isArray(action) && action.some((a) => a && a.kind === 'notification');
@@ -231,6 +257,25 @@ function createPageRoutes(ctx) {
         const t = TEMPLATES[template];
         const errors = {};
         const action = actionsFrom(fields, errors);
+        // An event watch has no address and no cadence either: Events delivers it (server/event-sources.js).
+        if (template === 'event') {
+            const name = String(fields.name == null ? '' : fields.name).trim();
+            if (name.length > 120) errors.name = 'A name can be at most 120 characters.';
+            const ev = eventChoice(fields.event);
+            if (!ev) errors.event = 'Choose what should happen.';
+            const filterValue = String(fields.event_filter || '').trim();
+            if (filterValue.length > 120 || /[\u0000-\u001f]/.test(filterValue)) errors.event_filter = 'At most 120 characters.';
+            if (Object.keys(errors).length) return { errors };
+            const body = {
+                source: { kind: 'event', pattern: ev.value, filter: filterValue ? { [ev.filterKey]: filterValue } : null },
+                cadence: null,
+                extraction: { kind: 'json', value_path: ev.valuePath },
+                condition: { op: 'changed' },
+                action,
+            };
+            if (name) body.name = name;
+            return { body };
+        }
         // A webhook watch has no address to fetch and no cadence: it is pushed to (server/webhook-sources.js).
         if (template === 'webhook') {
             const name = String(fields.name == null ? '' : fields.name).trim();
@@ -354,7 +399,9 @@ ${(template === 'price' || template === 'json') ? field('Hold for (seconds)', ht
 </fieldset>`;
 
         let extractionBlock;
-        if (template === 'webhook') {
+        if (template === 'event') {
+            extractionBlock = '';
+        } else if (template === 'webhook') {
             extractionBlock = html`<fieldset><legend>What should it read?</legend>
 ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="value_path" value="${fields.value_path}" maxlength="200" placeholder="e.g. action, release.tag_name, order.total">`, { name: 'value_path', error: errors.value_path, hint: 'A dot path into a JSON delivery. Leave it blank to read the whole delivery as text (it works for any sender).' })}
 </fieldset>`;
@@ -377,8 +424,15 @@ ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="v
 </fieldset>`;
         }
 
-        const pushed = template === 'webhook';
-        const whatBlock = pushed
+        const pushed = template === 'webhook' || template === 'event';
+        const chosen = eventChoice(fields.event) || EVENT_CHOICES[0];
+        const whatBlock = template === 'event'
+            ? html`<fieldset><legend>What to watch</legend>
+${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. When goosely goes live">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the event.' })}
+${field('When', select('event', EVENT_CHOICES.map((e) => ({ value: e.value, label: e.label })), fields.event), { name: 'event', error: errors.event, hint: 'It fires the moment OpenVibe.Events delivers it, once per occurrence. Nothing is polled.' })}
+${field(chosen.filterLabel, html`<input type="text" id="${idOf('event_filter')}" name="event_filter" value="${fields.event_filter}" maxlength="120">`, { name: 'event_filter', error: errors.event_filter, hint: 'Only that one; leave it blank for every one.' })}
+</fieldset>`
+            : pushed
             ? html`<fieldset><legend>What to watch</legend>
 ${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. New releases of my project">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch calls it a webhook watch.' })}
 <p class="muted small">There is no address to give: when you save it, Watch shows this watch’s own webhook address and its secret, once. Put both in the sender’s webhook settings.</p>
@@ -394,7 +448,7 @@ ${whatBlock}
 ${extractionBlock}
 ${conditionBlock}
 <fieldset><legend>${pushed ? 'How to tell you' : 'How often, and how to tell you'}</legend>
-${pushed ? html`<p class="muted small">Checked each time a signed delivery arrives (at most 60 an hour), never on a cadence.</p>` : field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
+${pushed ? html`<p class="muted small">${template === 'event' ? 'Checked each time the event arrives (at most 60 an hour), never on a cadence.' : 'Checked each time a signed delivery arrives (at most 60 an hour), never on a cadence.'}</p>` : field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
 ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'When the condition fires you get one notification on OpenVibe (your notifications on any OpenVibe site), with the value and a link here.' })}
 ${checkbox('Run one of my agents on OpenVibe.Actor', { name: 'agent_on', checked: fields.agent_on === 'on', hint: 'When the condition fires, Watch gives your agent the value and a link to this watch.' })}
 ${field('Agent id', html`<input type="text" id="${idOf('agent_id')}" name="agent_id" value="${fields.agent_id}" maxlength="30" placeholder="agt_…">`, { name: 'agent_id', error: errors.agent_id, hint: 'Find the id on your agent’s OpenVibe.Actor page. Required when running an agent.' })}
@@ -439,7 +493,7 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
                 : [{ label: 'Sign in to start', href: '/auth/login?next=%2Fwatches%2Fnew%3Ftemplate%3Dpage', primary: true }, { label: 'How it checks', href: '#h-check' }],
             note: yours || 'Free while it is in alpha. Reading this page needs no account.',
         });
-        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json', webhook: 'ov:code' };
+        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json', event: 'ov:live', webhook: 'ov:code' };
         page(req, res, {
             index: true,
             cache: signedIn(req) ? null : cache.htmlHeaders({ maxAge: 300 }),
