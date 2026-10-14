@@ -218,6 +218,10 @@ t('the event template: a channel going live (or a blog post) wakes the watch, wi
     assert.strictEqual(any.status, 303);
     const anyView = await request(svc.base, 'GET', `/api/v1/watches/${indexOf(any)}`, { token: ME });
     assert.deepStrictEqual(anyView.body.watch.source, { kind: 'event', pattern: 'blog.post.published', filter: null });
+    const linked = await svc.get(`/watches/new?template=event&agent_id=${agentId}&event=blog.post.published`, { cookie: session });
+    assert.match(linked.text, /name="agent_on"[^>]*checked/);
+    assert.ok(linked.text.includes(`value="${agentId}"`));
+    assert.match(linked.text, /<option value="blog\.post\.published" selected/);
     const bad = await create({ template: 'event', event: 'network.account.deleted' });
     assert.strictEqual(bad.status, 422, 'only the offered public events');
 });

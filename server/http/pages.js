@@ -591,6 +591,9 @@ ${older ? html`<a class="btn" href="${older}">Older watches</a>` : html`<span cl
         if (typeof q.value_path === 'string' && /^[A-Za-z0-9_$][A-Za-z0-9_.$\[\]-]{0,199}$/.test(q.value_path)) fields.value_path = q.value_path;
         if (typeof q.op === 'string' && TEMPLATES[template].ops.includes(q.op)) fields.op = q.op;
         if (typeof q.value === 'string') fields.value = q.value.slice(0, 200);
+        // A link from an Actor agent's page: run that agent when the watch fires (the person still submits the form).
+        if (typeof q.agent_id === 'string' && /^agt_[0-9A-HJKMNP-TV-Z]{26}$/.test(q.agent_id)) { fields.agent_on = 'on'; fields.agent_id = q.agent_id; fields.notify = ''; }
+        if (typeof q.event === 'string' && eventChoice(q.event)) fields.event = q.event;
         return fields;
     }
 
