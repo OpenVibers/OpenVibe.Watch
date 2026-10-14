@@ -24,6 +24,7 @@ const { createCarriers } = require('./carriers');
 const { extract } = require('./extract');
 const condition = require('./condition');   // { evaluate, hasChanged, holds, … }
 const { createCheck } = require('./check');
+const { createWatchBilling } = require('./billing');
 const { createScheduler } = require('./scheduler');
 const { createEventSources } = require('./event-sources');
 const { createWebhookSources } = require('./webhook-sources');
@@ -82,7 +83,10 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const runJobs = client ? createRunJobs(client, { baseUrl: config.actions.runUrl }) : null;
     const codesTasks = client ? createCodesTasks(client, { baseUrl: config.actions.codesUrl }) : null;
     const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, actor: givenActor || actorTasks, run: givenRun || runJobs, codes: givenCodes || codesTasks, now, log });
-    const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions, now, log });
+    // Usage readings (plan T5 step 14): a completed check queues one check-operation reading for Billing in its own
+    // commit; off unless WATCH_BILLING_INTERVAL_MS is set (server/billing.js).
+    const billing = createWatchBilling({ db, config: config.billing, networkUrl: config.networkInternalUrl, clock: { now }, fetchImpl, log });
+    const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions, billing, now, log });
     const scheduler = createScheduler({ db, check, config, now, log });
     // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.
     const eventSources = createEventSources({ db, check, config, fetchImpl, log, now });
@@ -101,7 +105,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const accountSend = givenSend || (config.oauth.clientSecret
         ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
         : null);
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources });
+    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources, billing });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
@@ -109,6 +113,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     outbox.start();
     if (config.worker.enabled) scheduler.start();
     actions.start();
+    if (billing.enabled) billing.start();
     const pruneTimer = setInterval(async () => {
         try { await observations.prune(); } catch (err) { log.error(`[observations] prune: ${err.message}`); }
         try { await eventSources.prune(); } catch (err) { log.error(`[event-sources] prune: ${err.message}`); }
@@ -142,6 +147,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         keys.stop();
         await scheduler.stop();
         await actions.stop();
+        await billing.stop();
         await outbox.stop();
         if (server) {
             server.closeAllConnections?.();
@@ -150,7 +156,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, eventSources, webhookSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
+    return { config, db, registry, eventSources, webhookSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, billing, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
 }
 
 /**

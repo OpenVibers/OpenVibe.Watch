@@ -16,6 +16,8 @@
  *        NOT dispatched here: a met condition records the trigger and emits the event, nothing else
  *     7  arm next_due_at (+ jitter, or exponential backoff after a failure, capped) and not_before
  *        (Retry-After)
+ *     8  a completed (not failed) check queues one check-operation usage reading for Billing with its run
+ *        (server/billing.js; off unless WATCH_BILLING_INTERVAL_MS is set)
  *
  * The run row, the observation and every event commit in ONE transaction: an event exists exactly
  * when its effect does. Nothing polls a source whose condition is 'changed' twice for the same
@@ -34,7 +36,7 @@ const FAILURE_STATES = new Set(['http_error', 'timeout', 'parse_error', 'rate_li
 const PERSON_OWNER = /^(usr|agt)_[0-9A-HJKMNP-TV-Z]{26}$/;
 const USER_OWNER = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 
-function createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions = null, now = () => Date.now(), log = console, ids = contractIds }) {
+function createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions = null, billing = null, now = () => Date.now(), log = console, ids = contractIds }) {
     const inflight = new Set();
 
     const st = {
@@ -163,9 +165,12 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
      */
     async function settle({ watch, run, failures, successAt = null, notBefore = 0, events = [], observation = null, endpoint = null, fired = null }) {
         const armed = nextDue(watch, run.finished_at, { failures, maxBackoffMs: config.worker.maxBackoffMs });
-        await db.tx(async () => {
+        await db.tx(async (t) => {
             if (observation) await observations.insert(observation);
             await st.insertRun.run(run);
+            // A completed check is one check-operation reading for Billing, queued with its run (server/billing.js);
+            // a failed one is not billed, and the run id keys it, so a replayed run inserts nothing.
+            if (billing && billing.enabled && run.carrier && !FAILURE_STATES.has(run.state)) await billing.queue(t, { watch, run });
             if (endpoint) await st.saveEndpoint.run(endpoint);
             await st.finish.run({
                 id: watch.id, at: run.finished_at, success_at: successAt, state: run.state,

@@ -158,6 +158,19 @@ function load(env = process.env) {
             },
         },
 
+        // Usage readings → OpenVibe.Billing (server/billing.js, plan T5 step 14): one check-operation reading per
+        // completed check, relayed every WATCH_BILLING_INTERVAL_MS with Watch's own client-credentials token. 0 (the
+        // default) is off: nothing is queued and no timer starts. Without OV_BILLING_INTERNAL_URL or the client secret,
+        // readings are queued and stay local.
+        billing: {
+            url: strip(env.OV_BILLING_INTERNAL_URL || ''),
+            clientId: env.OV_OAUTH_CLIENT_ID || 'watch',
+            clientSecret: env.OV_OAUTH_CLIENT_SECRET || '',
+            audience: env.OV_BILLING_AUDIENCE || 'openvibe.billing',
+            timeoutMs: int(env.WATCH_BILLING_TIMEOUT_MS, 5000),
+            intervalMs: int(env.WATCH_BILLING_INTERVAL_MS, 0),
+        },
+
         secrets: env,
     };
 }
