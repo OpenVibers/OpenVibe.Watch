@@ -132,7 +132,15 @@ This release carries the pull rungs and event sources:
 | `event` | delivered by OpenVibe.Events (see [Event sources](#event-sources)) | implemented |
 | `webhook` | a signed POST to `/hooks/<watch id>` (see [Webhook sources](#webhook-sources)) | implemented |
 | `run` | browser/code polling through OpenVibe.Run | step 6 |
-| `node` | a probe through OpenVibe.Node | step 7 |
+| `node` | a probe from the owner's own machine through OpenVibe.Bot and OpenVibe.Node (see below) | implemented (step 7) |
+
+**Node sources** (plan T18 step 7, contracts 0.167.0, [server/carriers/node.js](server/carriers/node.js)): `{ kind: 'node', node_id: 'dev_…', probe: { target, timeout_s } }`. The check runs from the owner's own machine:
+- **The call**: Watch asks OpenVibe.Bot (`WATCH_BOT_URL`, default `http://127.0.0.1:4630`) with its own token (`bot.computer.control`) and the owner in `X-OV-Subject`. Bot answers only for that person's machine, only where they turned on "Let my watches check things from this computer", and Watch may send nothing but the read-only `probe`.
+- **Targets**: the machine's OpenVibe Node reaches only its own network (private, loopback or link-local addresses).
+- **http(s) targets**: the answer's body is extracted like a page, and a status other than 200/203 is an `http_error`.
+- **tcp targets**: the document is `{ open, status: 'up' | 'down', ms }`.
+- **Owners**: an agent-owned watch is never probed (`node_person_only`).
+- **The form**: its "Something on your network goes down" template makes one: a machine id, a host:port, and the condition `status` eq `down`.
 
 A kind whose carrier does not exist yet is **accepted by the registry but never fetched**: the
 check is recorded `skipped` with `watch.carrier_unavailable` and the reason names the step. That is
@@ -468,8 +476,8 @@ Called elsewhere, as the service principal `watch` (client credentials from Open
   422), cross-site writes refused, and hostile names and values escaped on every page
 
 Not yet demonstrated: a check against a real site from a deployed service (nothing is deployed
-yet), the Run rung (step 6) and Node probes (step 7) — each answers `watch.carrier_unavailable` and fetches nothing
-today — and the action kinds beyond notifications. Event sources are covered end to end by
+yet), the Run rung (step 6), which answers `watch.carrier_unavailable` and fetches nothing
+today (node sources are covered by `test/node-carrier.test.js` against a stand-in Bot) — and the action kinds beyond notifications. Event sources are covered end to end by
 `test/event-sources.test.js` (matching, visibility, once per event, the budget, the signed route and the subscription
 sync against a stand-in Events), and webhook sources by `test/webhook-sources.test.js` (the secret shown once, both
 signing forms, every refusal, the budget, rotation, text and JSON bodies, and removal).
