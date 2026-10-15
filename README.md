@@ -49,6 +49,14 @@ answers direct loopback callers only: golden signals by route template, `watch_w
 `watch_checks_oldest_wait_seconds`, `watch_checks_in_flight`),
 `watch_last_check_timestamp_seconds`, `watch_last_success_timestamp_seconds`.
 
+Request telemetry: every HTTP request is aggregated by route template, method and status class, never
+by raw URL. Once a minute one `http.request` sample per key, plus the active-requests, p95 latency and
+event-loop-lag gauges, goes to this service's own `telemetry_samples` table (openvibe-sdk 0.46,
+`platform.telemetry-sample@1`, migration 0011); rows older than 14 days are deleted daily. `/shared`
+files, static assets, health, readiness and `/metrics` are not counted. `server/app.js` mounts
+openvibe-sdk's `telemetryMiddleware` (a no-op until init); `server/index.js` calls `telemetry.init()`
+at production start, runs the retention and flushes on stop.
+
 ## Public site
 
 `openvibe.watch` is also the place a person manages their own watches in a browser. Every page is
