@@ -48,11 +48,11 @@ function unavailable(kind) {
     };
 }
 
-function createCarriers({ fetcher, config, log = console, machines = null }) {
+function createCarriers({ fetcher, config, log = console, machines = null, projectSecrets = null }) {
     const carriers = {
-        http: createHttpCarrier({ fetcher, config, log }),
-        feed: createFeedCarrier({ fetcher, config, log }),
-        api: createApiCarrier({ fetcher, config, log }),
+        http: createHttpCarrier({ fetcher, config, log, projectSecrets }),
+        feed: createFeedCarrier({ fetcher, config, log, projectSecrets }),
+        api: createApiCarrier({ fetcher, config, log, projectSecrets }),
         event: createEventCarrier(),
         webhook: createWebhookCarrier(),
         node: createNodeCarrier({ machines }),

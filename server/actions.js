@@ -62,6 +62,7 @@
  * status() says delivery is off.
  */
 
+const { SecretRefused } = require('./project-secrets');
 const { signDeliveryHeaders } = require('openvibe-sdk/events');
 
 const USER_SUBJECT = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -177,7 +178,7 @@ function actorAgentInputFor(args) {
     return prefix + actorContextFor(args, 8000 - prefix.length);
 }
 
-function createActions({ db, config, notifications = null, post = null, actor = null, run: runJobs = null, codes = null, now = () => Date.now(), log = console }) {
+function createActions({ db, config, notifications = null, post = null, actor = null, run: runJobs = null, codes = null, projectSecrets = null, now = () => Date.now(), log = console }) {
     // Read at each use, not once: what a process was started with is what it enforces, for rows queued before it too.
     const grants = () => config.secretGrants;
     const enabled = Boolean(notifications) && config.actions.enabled;
@@ -213,6 +214,10 @@ function createActions({ db, config, notifications = null, post = null, actor = 
                 if (action.event_type !== TRIGGERED) { state = 'unavailable'; error = `watch.action_unavailable: ${action.event_type || 'an event'} is not an event Watch declares (only ${TRIGGERED})`; }
                 else if (!USER_SUBJECT.test(String(owner || ''))) { state = 'skipped'; error = `watch.action_no_person: ${TRIGGERED} names a person, and this watch belongs to an agent or a service`; }
                 else { state = 'sent'; error = 'emitted with the check run'; }
+            } else if (kind === 'webhook' && action.secret_ref) {
+                // A project secret (ADR-056): Network signs at delivery; the project's grant to watch decides then.
+                if (!watch.project_id || !watch.project_env) { state = 'unavailable'; error = 'watch.action_secret_unavailable: a project secret needs the watch to name its project'; }
+                else request = { url: action.url, secret_ref: action.secret_ref, project_id: watch.project_id, project_env: watch.project_env, body: webhookFor({ config, watch, run, value, previousValue, observedAt }) };
             } else if (kind === 'webhook') {
                 const why = grants() ? grants().refusal(action.secret_env, owner) : `${action.secret_env} is not granted to any owner`;
                 if (why) { state = 'unavailable'; error = `watch.action_secret_not_granted: ${why}`; }
@@ -241,17 +246,35 @@ function createActions({ db, config, notifications = null, post = null, actor = 
         }
     }
 
-    async function deliverWebhook(row, request, attempt) {
+    /** The signature headers: the operator-granted key secret_env names, or Network's signature with the project secret. */
+    async function webhookSignature(row, request, body) {
+        if (request.secret_ref) {
+            if (!projectSecrets) return { refused: 'watch.action_secret_unavailable: project secrets are not configured in this Watch' };
+            const t = Math.floor(now() / 1000);
+            try {
+                const { signature } = await projectSecrets.sign({ project_id: request.project_id, environment: request.project_env, name: request.secret_ref, message: `${t}.${body}` });
+                return { headers: { 'X-OpenVibe-Timestamp': String(t), 'X-OpenVibe-Signature-V2': `t=${t},v2=${signature}` } };
+            } catch (err) {
+                if (err instanceof SecretRefused) return { refused: `watch.action_secret_not_granted: ${err.message}` };
+                throw err;   // Network unreachable: the worker's backoff tries again
+            }
+        }
         const why = grants() ? grants().refusal(request.secret_env, row.owner_sub) : 'no grants';
-        if (why) return { state: 'unavailable', error: `watch.action_secret_not_granted: ${why}` };
+        if (why) return { refused: `watch.action_secret_not_granted: ${why}` };
         const secret = config.secrets ? config.secrets[request.secret_env] : null;
         if (!secret || String(secret).length < MIN_HOOK_SECRET) {
-            return { state: 'unavailable', error: `watch.action_secret_missing: ${request.secret_env} is not set (${MIN_HOOK_SECRET} characters or more)` };
+            return { refused: `watch.action_secret_missing: ${request.secret_env} is not set (${MIN_HOOK_SECRET} characters or more)` };
         }
-        if (!post) throw Object.assign(new Error('webhook delivery is not configured in this process'), { code: 'webhook_unconfigured' });
+        return { headers: signDeliveryHeaders(body, String(secret), { now: now() }) };
+    }
+
+    async function deliverWebhook(row, request, attempt) {
         const body = JSON.stringify(request.body);
+        const signed = await webhookSignature(row, request, body);
+        if (signed.refused) return { state: 'unavailable', error: signed.refused };
+        if (!post) throw Object.assign(new Error('webhook delivery is not configured in this process'), { code: 'webhook_unconfigured' });
         const headers = {
-            ...signDeliveryHeaders(body, String(secret), { now: now() }),
+            ...signed.headers,
             'X-OpenVibe-Event-Type': TRIGGERED,
             'X-OpenVibe-Delivery-Id': `${row.check_run_id}.${row.action_index}`,
             'X-OpenVibe-Delivery-Attempt': String(attempt),

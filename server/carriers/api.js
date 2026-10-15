@@ -15,7 +15,7 @@
  */
 const { parseXml, decodeBody, ParseError } = require('../util');
 const { at } = require('../extract');
-const { conditionalGet, onlyChange, ACCEPT } = require('./http');
+const { conditionalGet, onlyChange, secretsFor, ACCEPT } = require('./http');
 const { mapFields } = require('./feed');
 
 const PATH_RE = /^[A-Za-z0-9_@:$#-]+(\.[A-Za-z0-9_@:$#-]+)*$/;
@@ -30,13 +30,13 @@ function mapped(document, itemsPath) {
     return at(document, itemsPath);
 }
 
-function createApiCarrier({ fetcher, config }) {
+function createApiCarrier({ fetcher, config, projectSecrets = null }) {
     return {
         name: 'api',
         run: async ({ watch, state }) => {
             const source = watch.source;
             const out = await conditionalGet({
-                source, state, fetcher, secrets: config.secretGrants.viewFor(watch, config.secrets), accept: ACCEPT.api,
+                source, state, fetcher, secrets: await secretsFor(watch, config, projectSecrets), accept: ACCEPT.api,
                 onlyChangeNeeded: onlyChange(watch),
             });
             if (out.state !== 'ok' || !out.body) return out;

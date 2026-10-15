@@ -13,7 +13,7 @@
  */
 const { parseXml, toText, toIsoDate, canonicalUrl, toId, asArray, pick, decodeBody, ParseError } = require('../util');
 const { at } = require('../extract');
-const { conditionalGet, onlyChange, ACCEPT } = require('./http');
+const { conditionalGet, onlyChange, secretsFor, ACCEPT } = require('./http');
 
 function atomLink(entry, base) {
     const links = asArray(entry.link);
@@ -120,12 +120,12 @@ function parseFeed(text, url, { summaryMax = 1000, maxItems = 500 } = {}) {
     return { ...meta, items, skipped };
 }
 
-function createFeedCarrier({ fetcher, config }) {
+function createFeedCarrier({ fetcher, config, projectSecrets = null }) {
     return {
         name: 'feed',
         run: async ({ watch, state }) => {
             const out = await conditionalGet({
-                source: watch.source, state, fetcher, secrets: config.secretGrants.viewFor(watch, config.secrets), accept: ACCEPT.feed,
+                source: watch.source, state, fetcher, secrets: await secretsFor(watch, config, projectSecrets), accept: ACCEPT.feed,
                 onlyChangeNeeded: onlyChange(watch),
             });
             if (out.state !== 'ok' || !out.body) return out;

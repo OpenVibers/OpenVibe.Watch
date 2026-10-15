@@ -398,6 +398,15 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
   that names one is refused with 422 `watch.secret_not_granted` (the form shows why), and the carrier
   and the action worker check again at use. `OV_OAUTH_CLIENT_SECRET`, the credentials and the grants
   live in `/etc/openvibe/watch.env` (0600).
+- **Project secrets (ADR-056).** A watch that names a project may use that project's own secrets instead:
+  `source.auth.secret_ref` for its credential, and `secret_ref` on a webhook action for its signing key,
+  looked up in the watch's `project_env` (production by default). OpenVibe.Network keeps them and the project
+  grants each to `watch` (on openvibe.services, the project's Secrets page). A credential is **revealed** by
+  Network for the source URL's origin only, at fetch time, and used for that one request. A webhook is
+  **signed** by Network over `"<t>.<raw body>"` in the usual headers, so Watch never holds that key. A secret
+  Network refuses leaves the credential missing (the check says so), or makes the action unavailable.
+  Network unreachable is retried. Watch holds `network.secret.use` (Network's default grant), and naming a
+  project secret needs `project_id` (422 `watch.project_required`).
 - **Data.** An observation records what the source stated, never a guess; snapshots are capped and
   pruned by retention; a failed check never records an observation.
 
