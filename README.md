@@ -484,8 +484,13 @@ Called elsewhere, as the service principal `watch` (client credentials from Open
   every page and form, pause/resume/delete/check-now against a stub site (with the API's 409s and
   422), cross-site writes refused, and hostile names and values escaped on every page
 
-Not yet demonstrated: a check against a real site from a deployed service (nothing is deployed
-yet), the Run rung (step 6), which answers `watch.carrier_unavailable` and fetches nothing
+Demonstrated on production (2026-10-15): a check against a real site from the deployed service.
+- A feed watch on openvibe.work's `/jobs.atom` was made from Work's Get alerts link and submitted through the
+  prefilled form.
+- One check answered HTTP 200 with one observation; the condition was met and the notification fired.
+- The proof watch was deleted.
+
+Not yet demonstrated: the Run rung (step 6), which answers `watch.carrier_unavailable` and fetches nothing
 today (node sources are covered by `test/node-carrier.test.js` against a stand-in Bot) — and the action kinds beyond notifications. Event sources are covered end to end by
 `test/event-sources.test.js` (matching, visibility, once per event, the budget, the signed route and the subscription
 sync against a stand-in Events), and webhook sources by `test/webhook-sources.test.js` (the secret shown once, both
