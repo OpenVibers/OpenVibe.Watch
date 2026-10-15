@@ -49,7 +49,7 @@ const newAgent = () => require('openvibe-contracts').ids.newId('agent');
  * the caller says otherwise (a test of the SSRF guard boots with allowPrivate: false).
  * log: Watch's logger (default silent); limitsNow: the per-actor limiter's clock (default the wall clock).
  */
-async function boot({ env = {}, worker = 'off', lookupImpl, now, log = silent, limitsNow = null, allowPrivate = true, accountSend = null, notifications = null, post = null, actor = null, run = null, codes = null, projects = null, machines = null } = {}) {
+async function boot({ env = {}, worker = 'off', lookupImpl, now, log = silent, limitsNow = null, allowPrivate = true, accountSend = null, notifications = null, post = null, actor = null, run = null, codes = null, projects = null, machines = null, projectSecrets = null } = {}) {
     // A stub Network JWKS serving the generated signing key, so the SDK's JWKS client has something real
     // to fetch and verify against (no test touches the internet). Its URL is overridable via env.
     const jwksSite = await site({ '/api/.well-known/jwks': () => ({ body: JSON.stringify({ keys: [publicJwk] }) }) });
@@ -79,7 +79,7 @@ async function boot({ env = {}, worker = 'off', lookupImpl, now, log = silent, l
     });
     // One database per boot (PGlite, or WATCH_TEST_STORE=pg: the containers), dropped when the boot stops.
     const testdb = await require('./db').testDb();
-    const h = await start({ config, db: testdb.db, log, lookupImpl, limitsNow, accountSend, ...(notifications ? { notifications } : {}), ...(post ? { post } : {}), ...(actor ? { actor } : {}), ...(run ? { run } : {}), ...(codes ? { codes } : {}), ...(projects ? { projects } : {}), ...(machines ? { machines } : {}), ...(now ? { now } : {}) });
+    const h = await start({ config, db: testdb.db, log, lookupImpl, limitsNow, accountSend, ...(notifications ? { notifications } : {}), ...(post ? { post } : {}), ...(actor ? { actor } : {}), ...(run ? { run } : {}), ...(codes ? { codes } : {}), ...(projects ? { projects } : {}), ...(machines ? { machines } : {}), ...(projectSecrets ? { projectSecrets } : {}), ...(now ? { now } : {}) });
     const base = `http://127.0.0.1:${h.server.address().port}`;
 
     /** A session cookie for a person, as /auth/callback would have set it. */

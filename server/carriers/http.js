@@ -18,6 +18,7 @@
  * read from the environment by NAME at fetch time (config.secrets[auth.env]) and never stored,
  * logged, or sent to another origin than the one it was configured for.
  */
+const { SecretRefused } = require('../project-secrets');
 const { sha256, decodeBody } = require('../util');
 
 const ACCEPT = {
@@ -46,8 +47,10 @@ function requestFor(source, secrets, accept) {
     if (accept) headers.Accept = accept;
     const auth = source.auth;
     if (auth && auth.mode && auth.mode !== 'none') {
-        const secret = secrets ? secrets[auth.env] : null;
-        if (!secret) return { missing: auth.env };
+        // A project secret (secret_ref, ADR-056) arrives under its own key, revealed for this source's origin (secretsFor).
+        const key = auth.secret_ref ? `ref:${auth.secret_ref}` : auth.env;
+        const secret = secrets ? secrets[key] : null;
+        if (!secret) return { missing: auth.secret_ref ? `project secret ${auth.secret_ref}` : auth.env };
         if (auth.mode === 'bearer') { headers.Authorization = `Bearer ${secret}`; sensitive.push('Authorization'); }
         else if (auth.mode === 'header' && auth.header) { headers[auth.header] = secret; sensitive.push(auth.header); }
         else if (auth.mode === 'query' && auth.param) { const u = new URL(url); u.searchParams.set(auth.param, secret); url = u.toString(); }
@@ -71,7 +74,7 @@ async function conditionalGet({ source, state = {}, fetcher, secrets, accept, no
     if (req.missing) {
         return {
             state: 'disabled', error_code: 'credential_missing',
-            detail: `environment variable ${req.missing} is not set`, http_status: null, bytes: null, raw_body_hash: null,
+            detail: /^project secret /.test(req.missing) ? `${req.missing} is not available: not set, or not granted to watch for this source's origin` : `environment variable ${req.missing} is not set`, http_status: null, bytes: null, raw_body_hash: null,
             etag: null, last_modified: null, body: null, content_type: null, notBefore: null,
         };
     }
@@ -147,14 +150,34 @@ async function conditionalGet({ source, state = {}, fetcher, secrets, accept, no
     return { ...out, state: 'ok', body: res.body };
 }
 
-function createHttpCarrier({ fetcher, config }) {
+/**
+ * The credentials a carrier may send for this watch: its granted environment credential (secret-grants viewFor), or the
+ * project secret its source names (secret_ref), revealed by Network for the source URL's origin only. A secret Network
+ * refuses is simply absent (the check reports the credential missing); Network unreachable throws, and the check retries.
+ */
+async function secretsFor(watch, config, projectSecrets) {
+    const base = config.secretGrants ? config.secretGrants.viewFor(watch, config.secrets) : {};
+    const auth = watch && watch.source && watch.source.auth;
+    if (!auth || !auth.secret_ref || !auth.mode || auth.mode === 'none' || !projectSecrets || !watch.project_id || !watch.project_env) return base;
+    let origin;
+    try { origin = new URL(watch.source.url).origin; } catch { return base; }
+    try {
+        const { value } = await projectSecrets.reveal({ project_id: watch.project_id, environment: watch.project_env, name: auth.secret_ref, origin });
+        return { ...base, [`ref:${auth.secret_ref}`]: value };
+    } catch (err) {
+        if (err instanceof SecretRefused) return base;
+        throw err;
+    }
+}
+
+function createHttpCarrier({ fetcher, config, projectSecrets = null }) {
     return {
         name: 'http',
         run: async ({ watch, state }) => conditionalGet({
-            source: watch.source, state, fetcher, secrets: config.secretGrants.viewFor(watch, config.secrets), accept: ACCEPT.http,
+            source: watch.source, state, fetcher, secrets: await secretsFor(watch, config, projectSecrets), accept: ACCEPT.http,
             onlyChangeNeeded: onlyChange(watch),
         }),
     };
 }
 
-module.exports = { createHttpCarrier, conditionalGet, retryAfterMs, onlyChange, requestFor, ACCEPT, decodeBody };
+module.exports = { createHttpCarrier, conditionalGet, retryAfterMs, onlyChange, requestFor, secretsFor, ACCEPT, decodeBody };

@@ -170,6 +170,13 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const bad = secretGrants.check(owner, rec);
         if (bad.length) throw new RegistryError(`${bad[0].path}: ${bad[0].reason}`, 'watch.secret_not_granted');
     }
+    /** A project secret (ADR-056, secret_ref) lives in a project: a watch naming one must name its project. */
+    function checkProjectSecrets(rec) {
+        const auth = rec.source && rec.source.auth;
+        const refs = (auth && auth.mode && auth.mode !== 'none' && auth.secret_ref ? 1 : 0)
+            + (Array.isArray(rec.action) ? rec.action.filter((a) => a && a.kind === 'webhook' && a.secret_ref).length : 0);
+        if (refs && !rec.project_id) throw new RegistryError('a project secret (secret_ref) lives in a project: set project_id to a project you are an admin or owner of', 'watch.project_required');
+    }
     function checkActorAgents(owner, rec) {
         if (!PERSON.test(String(owner || '')) && Array.isArray(rec.action) && rec.action.some((a) => a && a.kind === 'actor-agent')) {
             throw new RegistryError('watch.action_no_person: an Actor agent runs for a person, and this watch belongs to an agent or a service');
@@ -197,9 +204,9 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
     const st = {
         get: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
         countOwned: db.prepare('SELECT COUNT(*) AS n FROM watches WHERE owner_sub = ? AND deleted_at IS NULL'),
-        insert: db.prepare(`INSERT INTO watches (id, project_id, owner_sub, name, status, source, cadence, extraction, comparison, condition,
+        insert: db.prepare(`INSERT INTO watches (id, project_id, project_env, owner_sub, name, status, source, cadence, extraction, comparison, condition,
             action, budget, retention, labels, next_due_at, not_before, created_at, updated_at, updated_by)
-            VALUES (@id, @project_id, @owner_sub, @name, @status, @source, @cadence, @extraction, @comparison, @condition,
+            VALUES (@id, @project_id, @project_env, @owner_sub, @name, @status, @source, @cadence, @extraction, @comparison, @condition,
             @action, @budget, @retention, @labels, @next_due_at, 0, @created_at, @updated_at, @updated_by)`),
     };
 
@@ -217,6 +224,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         budget: (v) => JSON.stringify(v || {}),
         retention: (v) => JSON.stringify(v || {}),
         project_id: (v) => v,
+        project_env: (v) => v,
     };
 
     /** The stored record, request-shaped (what a PATCH merges into). */
@@ -225,6 +233,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         return {
             id: row.id,
             project_id: row.project_id,
+            ...(row.project_env ? { project_env: row.project_env } : {}),
             owner: row.owner_sub,
             name: row.name,
             labels: parse(row.labels) || {},
@@ -269,6 +278,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         return validateView({
             id: rec.id,
             project_id: rec.project_id,
+            project_env: rec.project_env || null,
             owner: rec.owner,
             name: rec.name,
             labels: rec.labels,
@@ -313,6 +323,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const owner = ownerOf(principal);
         if (!owner) throw new RegistryError('no acting subject', 'watch.invalid');
         checkSecrets(owner, req);
+        checkProjectSecrets(req);
         checkActorAgents(owner, req);
         await checkProject(owner, req, true);
         // A per-owner cap, so one caller cannot fill the registry (the API and the form both come
@@ -339,6 +350,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const row = {
             id,
             project_id: req.project_id || null,
+            project_env: req.project_id ? (req.project_env || 'production') : null,
             owner_sub: owner,
             name: rec.name,
             status: rec.status,
@@ -383,8 +395,12 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (merged.project_id === null) delete merged.project_id;
         validateRequest(merged);
         checkSecrets(row.owner_sub, merged);
+        checkProjectSecrets(merged);
         checkActorAgents(row.owner_sub, merged);
         await checkProject(row.owner_sub, merged, changes.project_id !== undefined && changes.project_id !== row.project_id);
+        // The project environment follows the project: production when a project is first named, gone with it.
+        if (changes.project_id === null) changes = { ...changes, project_env: null };
+        else if (changes.project_id && changes.project_env === undefined && !row.project_env) changes = { ...changes, project_env: 'production' };
         const sets = [];
         const args = { id: row.id, updated_at: now(), updated_by: ownerOf(principal) };
         for (const [k, v] of Object.entries(changes)) {

@@ -44,7 +44,7 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null } = {}) {
+async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null, projectSecrets: givenProjectSecrets = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -78,14 +78,16 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     // Every carrier goes out through the spacer, so two watches over one host never hammer it.
     // A node source probes from its owner's own machine through OpenVibe.Bot (carriers/node.js).
     const machines = givenMachines || (client ? createMachines(client, { baseUrl: config.actions.botUrl }) : null);
-    const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log, machines });
+    // Project secrets (ADR-056): a source credential or a webhook signature by secret_ref, through Network.
+    const projectSecrets = givenProjectSecrets || (client ? require('./project-secrets').createProjectSecrets(client, { networkUrl: config.networkInternalUrl }) : null);
+    const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log, machines, projectSecrets });
     const notifications = client ? createNotificationsClient(client) : null;
     const actorTasks = client ? createActorTasks(client, { baseUrl: config.actions.actorUrl }) : null;
     // Webhook actions leave through the same guard as every fetch (server/net/post.js).
     const post = givenPost || createPoster({ guard, userAgent: config.fetch.userAgent, timeoutMs: config.actions.webhookTimeoutMs });
     const runJobs = client ? createRunJobs(client, { baseUrl: config.actions.runUrl }) : null;
     const codesTasks = client ? createCodesTasks(client, { baseUrl: config.actions.codesUrl }) : null;
-    const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, actor: givenActor || actorTasks, run: givenRun || runJobs, codes: givenCodes || codesTasks, now, log });
+    const actions = createActions({ db, config, notifications: givenNotifications || notifications, post, actor: givenActor || actorTasks, run: givenRun || runJobs, codes: givenCodes || codesTasks, projectSecrets, now, log });
     // Usage readings (plan T5 step 14): a completed check queues one check-operation reading for Billing in its own
     // commit; off unless WATCH_BILLING_INTERVAL_MS is set (server/billing.js).
     const billing = createWatchBilling({ db, config: config.billing, networkUrl: config.networkInternalUrl, clock: { now }, fetchImpl, log });

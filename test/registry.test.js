@@ -111,7 +111,7 @@ t('the view is validated against watch.watch@1, and the health tells the runtime
     assert.ok(validate('watch.watch@1', view).valid);
     assert.deepStrictEqual(Object.keys(view).sort(), [
         'action', 'budget', 'cadence', 'comparison', 'condition', 'created_at', 'extraction', 'health', 'id',
-        'labels', 'name', 'owner', 'project_id', 'retention', 'source', 'status', 'updated_at',
+        'labels', 'name', 'owner', 'project_env', 'project_id', 'retention', 'source', 'status', 'updated_at',
     ]);
     assert.deepStrictEqual(view.health.status, 'never_checked');
     assert.strictEqual(view.health.next_due_at != null, true);
