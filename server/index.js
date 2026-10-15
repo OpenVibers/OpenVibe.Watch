@@ -194,9 +194,9 @@ if (require.main === module) {
         // flight get 15 s, then handles.close() (the prune timers and JWKS refresher stopped, the scheduler,
         // relay and server stopped, the database closed; a rejection exits 1); past 25 s the process exits 1.
         // Request telemetry (openvibe-sdk/service, plan T1): one aggregated sample per route template, method and status
-        // class each 15 s, stored in this service's telemetry_samples table; rows older than 30 days go daily.
-        telemetry.init({ service: 'watch', sink: createPgTelemetrySink({ db: handles.db, log: console }), skipPrefixes: ['/shared'] });
-        const telemetryRetention = startTelemetryRetention({ db: handles.db, log: console });
+        // class each minute, stored in this service's telemetry_samples table; rows older than 14 days go daily.
+        telemetry.init({ service: 'watch', sink: createPgTelemetrySink({ db: handles.db, log: console }), skipPrefixes: ['/shared'], intervalMs: 60_000 });
+        const telemetryRetention = startTelemetryRetention({ db: handles.db, log: console, olderThanDays: 14 });
         gracefulStop({ name: 'Watch', server: handles.server, handles, drainMs: 15000, deadlineMs: 25000, stop: [async () => { if (telemetryRetention) await telemetryRetention.stop(); await telemetry.stop(); }] });
     }).catch((err) => {
         console.error(`[watch] failed to start: ${err.stack || err}`);
