@@ -529,7 +529,7 @@ POSTs have their own per-address limit zones (nginx refuses `limit_req` inside `
 `sudo ovhost deploy watch`.
 
 <!-- versions:start -->
-- openvibe-contracts: v0.188.2
+- openvibe-contracts: v0.200.0
 - openvibe-sdk: v0.50.1
 - openvibe-shared: v4.3.0
 <!-- versions:end -->
