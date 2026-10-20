@@ -4,9 +4,11 @@
 > watch, get told when it changes or fires — cheaply, because a Watch never polls when an event or
 > the site's own ETag will do.
 
-**Status:** alpha (plan T18 steps 2–3 and step 8). The registry, the check engine, the pull carriers
-and the public site (sign-in, pages, forms) exist; the event, webhook, Node and Run rungs and the
-actions do not yet.  
+**Status:** alpha (plan T18). The registry, the check engine, the pull carriers (`http`, `feed`, `api`), the push
+sources (OpenVibe events and signed webhooks), Node probes from the owner's own machine, the actions (a notification,
+an event, a webhook, an Actor task or agent run, a Run job, a Codes task) and the public site (sign-in, seven starting
+points, forms) exist. The Run rung (browser or code polling through OpenVibe.Run) and the `ai` extraction do not
+yet.  
 **Domain:** `openvibe.watch` (a public, server-rendered site at [Public site](#public-site); the API
 is loopback-only). Install steps: [Public host](#public-host).  
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 — T18 (Watch complete),
@@ -77,15 +79,15 @@ every page and every form, never 403. A signed-in write must also come from this
 
 | Page | What it shows |
 |---|---|
-| `/` | what Watch is in one paragraph; four starting points as cards; how it checks in plain words; your watches summary (counts by status) when signed in |
+| `/` | what Watch is in one paragraph; the seven starting points as cards; how it checks in plain words; your watches summary (counts by status) when signed in |
 | `/watches` | your watches: name, source host, condition in words, status, last check state and time, last value, next due — paged with `before` |
-| `/watches/new?template=page\|price\|feed\|json` | the one create form, showing only the fields the chosen kind needs |
+| `/watches/new?template=page\|price\|feed\|json\|event\|webhook\|lan` | the one create form, showing only the fields the chosen kind needs |
 | `/watches/:id` | the watch in words, status with pause/resume/delete/check-now, the observation history (time, value, changed, condition met) and the check runs with their states in plain words, both paged |
 | `/watches/:id/edit` | the same form, PATCH semantics |
 | `/how-it-works`, `/updates` | the carrier order, the manners and every state, in plain words; Watch's own changelog |
 | `/robots.txt`, `/sitemap.xml`, `/llms.txt(/-full)` | discovery: the home page and how-it-works are listed; `/watches` and `/auth` are disallowed |
 
-**Four starting points**, each a page of the same form:
+**Seven starting points**, each a page of the same form ([server/http/pages.js](server/http/pages.js) `TEMPLATES`):
 
 | Template | Source | Extraction | Condition |
 |---|---|---|---|
@@ -93,14 +95,21 @@ every page and every form, never 403. A signed-in write must also come from this
 | `price` | http | css selector or regex | `lt`/`lte`/`gt`/`gte` |
 | `feed` | feed | the newest item (`latest`) | `changed` |
 | `json` | api | json with an optional `value_path` | any of the ops |
+| `event` | event (a channel goes live, a blog post, a wiki page published …) | the event | `changed` |
+| `webhook` | webhook (the watch's own signed address) | json with an optional `value_path` | any of the ops |
+| `lan` | node (a host:port on the owner's own network, checked by their own computer) | `status` | `eq` `down` |
+
+Besides **Notify me**, the form can run one of the person's OpenVibe.Actor agents (`actor-agent`, by its `agt_` id,
+with an optional note) or start a coding task on OpenVibe.Codes in a repository they name (`codes-run`) when the watch
+fires.
 
 The cadence is a select (15 minutes, 1 hour, 6 hours, 1 day); 15 minutes is the shortest a person may
 choose here (the contract's floor is 30 seconds, for a service). A validation error re-renders the
 form with the person's own input and the registry's own message next to the field it names. The
-kinds whose carrier does not exist yet (run, node) and the push kinds (event, webhook) and the `ai` extraction are **not
-offered** — and a watch of such a kind created through the API still answers `watch.carrier_unavailable`
-when checked from the site, fetching nothing. An event watch (made through the API) is checked when its event
-arrives, so Check now answers `watch.event_awaited`.
+kind whose carrier does not exist yet (`run`) and the `ai` extraction are **not offered** — and a watch of such a kind
+created through the API still answers `watch.carrier_unavailable` when checked from the site, fetching nothing. An
+event watch is checked when its event arrives and a webhook watch when a signed delivery reaches its `/hooks/` address,
+so Check now answers `watch.event_awaited` or `watch.webhook_awaited`, fetching nothing.
 
 Check-now from the page respects the API's limits and its refusals: a second check while one runs or
 a check of a paused watch is the API's 409, said in words; a kind without a carrier is the API's 422;
