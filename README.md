@@ -79,9 +79,9 @@ every page and every form, never 403. A signed-in write must also come from this
 
 | Page | What it shows |
 |---|---|
-| `/` | what Watch is in one paragraph; the seven starting points as cards; how it checks in plain words; your watches summary (counts by status) when signed in |
+| `/` | what Watch is in one paragraph; the seven starting points as cards; channels active on OpenVibe.Live lately (live first) with a "tell me when they go live" watch each; ready-made watches (Host plan prices, release and job feeds, each blog's new posts); how it checks in plain words; the API samples; the questions (FAQPage JSON-LD); your watches summary (counts by status) when signed in. The channels, plans and blogs are OpenVibe.Search's public documents, read anonymously and kept 10 minutes ([server/http/network-reads.js](server/http/network-reads.js), `WATCH_SEARCH_URL`, `https://search.openvibe.network` in production, off elsewhere); a section with nothing to show is left out |
 | `/watches` | your watches: name, source host, condition in words, status, last check state and time, last value, next due — paged with `before` |
-| `/watches/new?template=page\|price\|feed\|json\|event\|webhook\|lan` | the one create form, showing only the fields the chosen kind needs |
+| `/watches/new?template=page\|price\|feed\|json\|event\|webhook\|lan` | the one create form, showing only the fields the chosen kind needs; a link may fill it in (`url`, `name`, `value_path`, `op`, `value`, `event`, `event_filter`, `agent_id`), and the person still reviews and saves |
 | `/watches/:id` | the watch in words, status with pause/resume/delete/check-now, the observation history (time, value, changed, condition met) and the check runs with their states in plain words, both paged |
 | `/watches/:id/edit` | the same form, PATCH semantics |
 | `/how-it-works`, `/updates` | the carrier order, the manners and every state, in plain words; Watch's own changelog |

@@ -19,7 +19,7 @@ const { html, raw, esc } = require('./html');
 
 const NETWORK_URL = 'https://openvibe.network';
 const SITE_NAME = 'OpenVibe.Watch';
-const TAGLINE = 'Get told when a page, a feed or an API changes.';
+const TAGLINE = 'Get told when a page or a feed changes.';
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 // The product's navigation: one entry per public page it serves.
 const NAV = [
@@ -43,7 +43,7 @@ const asset = (rel) => `/${rel}?v=${assetVersion(rel)}`;
 let RELEASE = 'dev';
 function setRelease(id) { if (id) RELEASE = String(id); }
 
-/** o: title, description, body (html), viewer, config, path, index (default false), scripts [rel], crumbs, jsonLd */
+/** o: title, description, body (html), viewer, config, path, index (default false), scripts [rel], crumbs, jsonLd, css [rel] (a page's own stylesheet) */
 function renderPage(o) {
     const viewer = o.viewer || { kind: 'anonymous' };
     const signedIn = viewer.kind === 'user';
@@ -86,6 +86,7 @@ function renderPage(o) {
 ${appIcon.headTags({ site: 'watch' })}
 ${(o.styles || []).map((name) => `<link rel="stylesheet" href="${esc(ovServe.url(name))}">`).join('\n')}
 <link rel="stylesheet" href="${asset('css/app.css')}">
+${(o.css || []).map((rel) => `<link rel="stylesheet" href="${asset(rel)}">`).join('\n')}
 ${render(scripts)}
 <meta name="ov-boost" content="watch@${RELEASE}">
 <script src="${ovServe.url('boost.js')}" data-main="#main" defer></script>`,

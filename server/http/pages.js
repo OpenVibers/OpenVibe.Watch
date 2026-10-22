@@ -24,6 +24,8 @@ const { send } = require('../render/layout');
 const W = require('../render/watch');
 const changelog = require('../render/changelog');
 const { createDiscoveryRoutes, homeJsonLd, DESCRIPTION } = require('./discovery');
+const { createNetworkReads } = require('./network-reads');
+const seo = require('openvibe-shared/seo');
 
 /** The four starting points. Each fixes the source kind, the extraction and the condition's ops. */
 const TEMPLATES = {
@@ -516,6 +518,26 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
 
     // ── Home ────────────────────────────────────────────────────────────────────────────────
 
+    const reads = createNetworkReads({ searchUrl: config.search && config.search.url, log });
+    const newWatch = (q) => `/watches/new?${new URLSearchParams(q)}`;
+    // Feeds anyone may watch, each checked to answer with a feed: what a person most often wants told about.
+    const FEEDS = [
+        { title: 'New releases of the OpenVibe Node', detail: 'The agent that runs on robots and computers, from GitHub.', url: 'https://github.com/OpenVibers/OpenVibe.Node/releases.atom', where: 'GitHub' },
+        { title: 'New Node.js releases', detail: 'Every Node.js release, current and LTS.', url: 'https://nodejs.org/en/feed/releases.xml', where: 'nodejs.org' },
+        { title: 'New remote jobs on OpenVibe.Work', detail: 'Every new remote listing OpenVibe.Work gathers.', url: 'https://openvibe.work/jobs.atom?remote=true', where: 'OpenVibe.Work' },
+    ];
+
+    /** Questions people ask first, answered from what Watch does today. */
+    const FAQ = [
+        ['What can I watch?', 'A web page or one part of it, a price or any number on a page, an RSS or Atom feed, a value in a JSON API, a webhook that something calls, an OpenVibe event such as a channel going live, or a device on your own network.'],
+        ['How often does it check?', 'On the cadence you pick: every 15 minutes, hourly, every 6 hours or daily. Events and webhooks are not polled at all: the watch wakes the moment they arrive.'],
+        ['Will it hammer the sites I watch?', 'No. It asks whether anything changed before downloading again, never sends two requests to one site at once, keeps a minimum gap per site, and waits when a site asks it to.'],
+        ['How am I told?', 'A notification on your OpenVibe account by default. A watch can also call your webhook, hand a task to your OpenVibe.Actor agent or start a coding task on your own machine.'],
+        ['Does it guess when a check fails?', 'Never. A failed check is recorded as failed with its reason, and a value that is missing stays missing. Every check is kept with the time and what it found.'],
+        ['What does it cost?', 'Nothing while it is in alpha. Reading this page needs no account; making a watch needs your OpenVibe account.'],
+        ['Can my app make watches?', 'Yes. The same API the site uses creates, pauses and checks watches and reads every observation, with the watch.* capabilities granted on OpenVibe.Services.'],
+    ];
+
     r.get('/', async (req, res) => {
         let summary = null;
         if (signedIn(req)) {
@@ -532,19 +554,31 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
             eyebrow: 'OpenVibe.Watch · pages, feeds, APIs and webhooks',
             title: 'Know the moment it changes.',
             accent: 'Checked politely, never guessed.',
-            lede: 'Give Watch a page, a feed or a JSON API (or let a webhook call it), say which value you care about and when to tell you. It checks on the cadence you pick or the moment a webhook arrives, records what every check found, and tells you when your condition fires.',
+            lede: 'Give Watch a page, a feed or a JSON API, or pick something on OpenVibe such as a channel going live. Say which value you care about and when to tell you. It checks on the cadence you pick, or wakes the moment an event or a webhook arrives, keeps what every check found, and tells you when your condition fires.',
             actions: signedIn(req)
                 ? [{ label: 'New watch', href: '/watches/new?template=page', primary: true }, { label: 'Your watches', href: '/watches' }]
                 : [{ label: 'Sign in to start', href: '/auth/login?next=%2Fwatches%2Fnew%3Ftemplate%3Dpage', primary: true }, { label: 'How it checks', href: '#h-check' }],
             note: yours || 'Free while it is in alpha. Reading this page needs no account.',
         });
-        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json', event: 'ov:live', webhook: 'ov:code' };
+        const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json', event: 'ov:live', webhook: 'ov:code', lan: 'ov:plug' };
+        const [channelRows, plans, postRows] = await Promise.all([reads.channels(), reads.plans(), reads.posts()]);
+        const channels = channelRows.slice().sort((a, b) => Number(b.live) - Number(a.live)).slice(0, 8);
+        // Newest first from Search, so the first post seen for a blog is its latest.
+        const blogs = [...postRows.reduce((m, p) => (m.has(p.blog) ? m : m.set(p.blog, p)), new Map()).values()].slice(0, 3);
+        const card = ({ title, detail, href, label, extra = '' }) => html`<li class="hm-card"><div class="hm-card-body"><b>${title}</b>${detail ? html`<span>${detail}</span>` : ''}${raw(extra)}</div><a class="hm-go" href="${href}">${label}</a></li>`;
+        const readyGroups = [
+            plans.length ? { title: 'Hosting prices', lede: 'Plans on OpenVibe.Host, read from its catalog API.', items: plans.map((p) => card({ title: p.title, detail: p.detail, href: newWatch({ template: 'json', url: `${p.origin}/api/v1/catalog/plans/${p.id}`, value_path: 'plan.price_monthly', op: 'changed', name: `Price: ${p.title}`.slice(0, 80) }), label: 'Tell me when the price changes' })) } : null,
+            { title: 'Feeds', lede: 'Told the moment a new item appears.', items: FEEDS.map((f) => card({ title: f.title, detail: f.detail, href: newWatch({ template: 'feed', url: f.url, name: f.title.slice(0, 80) }), label: 'Watch this feed' })) },
+            blogs.length ? { title: 'Blogs on OpenVibe', lede: 'Woken by the blog.post.published event, so nothing is polled.', items: blogs.map((b) => card({ title: `New posts on @${b.blog}`, detail: `Latest: ${b.title}`, href: newWatch({ template: 'event', event: 'blog.post.published', event_filter: b.blog, name: `New posts on @${b.blog}` }), label: 'Tell me about new posts' })) } : null,
+        ].filter(Boolean);
+        const faqLd = seo.jsonLd.faq(FAQ.map(([q, a]) => ({ q, a })));
         page(req, res, {
             index: true,
             cache: signedIn(req) ? null : cache.htmlHeaders({ maxAge: 300 }),
-            jsonLd: homeJsonLd(config),
+            jsonLd: [...homeJsonLd(config), channels.length ? seo.jsonLd.itemList('Channels on OpenVibe.Live you can watch', channels.map((c) => ({ name: `@${c.username}`, url: c.url }))) : null, faqLd],
             description: DESCRIPTION,
             styles: [showcase.STYLESHEET],
+            css: ['css/home.css'],
             body: html`${raw(hero)}
 ${raw(showcase.features({
                 id: 'start',
@@ -552,7 +586,12 @@ ${raw(showcase.features({
                 lede: 'Each opens the form filled in for that kind of watch; change anything before you save it.',
                 items: TEMPLATE_NAMES.map((n) => ({ icon: ICONS[n] || 'ov:bell', title: TEMPLATES[n].card, text: TEMPLATES[n].cardBlurb, href: `/watches/new?template=${n}` })),
             }))}
-<p class="muted small watch-later">Pages, feeds, APIs and webhooks today; watches woken by OpenVibe events are made through the API. Browser checks through Run, Node probes and AI readings come later, and are not offered until Watch can really check them.</p>
+${channels.length ? html`<section class="sc-sec" aria-labelledby="h-live"><div class="hm-head"><h2 id="h-live">Know when a channel goes live</h2><a class="hm-more" href="https://openvibe.live/">OpenVibe.Live</a></div>
+<p class="sc-lede">Channels active on OpenVibe.Live lately. A watch on one wakes on the live.stream.started event the moment it goes live: nothing is polled.</p>
+<ul class="hm-grid">${channels.map((c) => html`<li class="hm-card"><div class="hm-card-body"><b><a href="${c.url}">@${c.username}</a></b><span>${[c.category, c.followers ? `${c.followers} follower${c.followers === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span>${c.live ? raw('<span class="hm-live">Live now</span>') : ''}</div><a class="hm-go" href="${newWatch({ template: 'event', event: 'live.stream.started', event_filter: c.username, name: `@${c.username} goes live` })}">Tell me when they go live</a></li>`)}</ul></section>` : ''}
+<section class="sc-sec" aria-labelledby="h-ready"><h2 id="h-ready">Ready-made watches</h2>
+<p class="sc-lede">Each opens the form already filled in. Check it, change anything, and save.</p>
+${readyGroups.map((g) => html`<h3 class="hm-group">${g.title}</h3><p class="hm-group-lede">${g.lede}</p><ul class="hm-grid">${g.items}</ul>`)}</section>
 ${raw(showcase.steps({
                 id: 'steps',
                 title: 'From a URL to a notification',
@@ -572,6 +611,17 @@ ${raw(showcase.steps({
 <li><strong>Every check is recorded.</strong> Read, no change, changed, condition met, a site error, a timeout, an unreadable answer, a wait, a skipped kind — the state is kept with the value, the time and a capped snapshot, and the watch is re-armed on every path.</li>
 </ul>
 <p><a href="/how-it-works">The full picture, in plain words</a>.</p></section>
+${raw(showcase.code({
+                id: 'api',
+                title: 'Make watches from your own code',
+                lede: 'The site and the API are the same: create, pause and check watches and read every observation with a token that holds the watch.* capabilities.',
+                samples: [
+                    { label: 'Create a watch (curl)', lang: 'sh', code: `curl -X POST ${config.baseUrl}/api/v1/watches \\\n  -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  -H 'Content-Type: application/json' \\\n  -d '{"name": "Node.js releases",\n       "source": {"kind": "feed", "url": "https://nodejs.org/en/feed/releases.xml"},\n       "cadence": {"every_sec": 3600},\n       "extraction": {"kind": "json", "value_path": "latest"},\n       "condition": {"op": "changed"},\n       "action": [{"kind": "notification"}]}'` },
+                    { label: 'Read what it found (curl)', lang: 'sh', code: `# Your watches\ncurl -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  ${config.baseUrl}/api/v1/watches\n\n# Every value one watch observed, newest first\ncurl -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  ${config.baseUrl}/api/v1/watches/wch_…/observations` },
+                ],
+            }))}
+<section class="sc-sec" id="faq" aria-labelledby="h-faq"><h2 id="h-faq">Questions</h2>
+<div class="hm-faq">${FAQ.map(([q, a]) => html`<div class="hm-qa"><h3>${q}</h3><p>${a}</p></div>`)}</div></section>
 ${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-yours">Your watches</h2>
 <p>${summary.total ? html`You have <strong>${summary.total}</strong> watch${summary.total === 1 ? '' : 'es'}: ${summary.active} active, ${summary.paused} paused, ${summary.disabled} disabled, ${summary.failed} failing.` : 'You have no watches yet.'} <a href="/watches">See them</a> or <a href="/watches/new?template=page">start one</a>.</p></section>` : ''}`,
         });
@@ -639,6 +689,8 @@ ${older ? html`<a class="btn" href="${older}">Older watches</a>` : html`<span cl
         // A link from an Actor agent's page: run that agent when the watch fires (the person still submits the form).
         if (typeof q.agent_id === 'string' && /^agt_[0-9A-HJKMNP-TV-Z]{26}$/.test(q.agent_id)) { fields.agent_on = 'on'; fields.agent_id = q.agent_id; fields.notify = ''; }
         if (typeof q.event === 'string' && eventChoice(q.event)) fields.event = q.event;
+        // The home page's "Tell me when they go live" names the channel: the event's filter (bounded like the form's).
+        if (typeof q.event_filter === 'string' && q.event_filter.length <= 120 && !/[\u0000-\u001f]/.test(q.event_filter)) fields.event_filter = q.event_filter.trim();
         return fields;
     }
 

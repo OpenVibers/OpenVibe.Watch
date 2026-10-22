@@ -1,0 +1,33 @@
+/* openvibe.watch's home page only (server/http/pages.js): channels to watch, ready-made watches and the questions.
+   Colours come from the Frame's theme tokens, so it follows the person's theme, light or dark. */
+.page { --hm-accent-text: color-mix(in srgb, var(--accent-light, #60a5fa) 45%, var(--text-primary, #e6edf7)); }
+.sc-eyebrow { color: var(--hm-accent-text); }
+.hm-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; }
+.hm-head h2 { font-size: clamp(22px, 2.6vw, 30px); letter-spacing: -.02em; margin: 0 0 6px; }
+.hm-more { font-weight: 650; font-size: 14.5px; white-space: nowrap; }
+
+.hm-group { margin: 22px 0 2px; font-size: 13px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-secondary, #96a7c2); }
+.hm-group-lede { margin: 0 0 10px; font-size: 14px; color: var(--text-secondary, #96a7c2); }
+
+.hm-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); }
+.hm-card { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; min-width: 0; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--border, rgba(255, 255, 255, .08)); background: var(--bg-secondary, #101828); transition: border-color .15s; }
+.hm-card:hover, .hm-card:focus-within { border-color: var(--accent, #3b82f6); }
+.hm-card-body { display: grid; gap: 4px; min-width: 0; }
+.hm-card-body b { font-size: 15.5px; overflow-wrap: anywhere; }
+.hm-card-body b a { color: var(--text-primary, #e6edf7); text-decoration: none; }
+.hm-card-body b a:hover { text-decoration: underline; }
+.hm-card-body span { font-size: 13.5px; line-height: 1.45; color: var(--text-secondary, #96a7c2); overflow-wrap: anywhere; }
+.hm-live { justify-self: start; margin-top: 2px; padding: 1px 8px; border-radius: 999px; font-size: 12px !important; font-weight: 700; color: color-mix(in srgb, var(--live-red, #ef4444) 50%, var(--text-primary, #e6edf7)) !important; border: 1px solid currentColor; }
+.hm-go { align-self: flex-start; font-size: 14px; font-weight: 700; color: var(--hm-accent-text); text-decoration: none; }
+.hm-go:hover, .hm-go:focus-visible { text-decoration: underline; }
+
+.hm-faq { display: grid; gap: 12px 28px; grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); }
+.hm-qa { padding: 4px 0 14px; border-bottom: 1px solid var(--border, rgba(255, 255, 255, .08)); }
+.hm-qa h3 { margin: 0 0 6px; font-size: 16px; }
+.hm-qa p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--text-secondary, #96a7c2); }
+
+/* The shared steps and code grids ask for 280–320 px; a 320 px phone has less. */
+.sc-steps { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
+.sc-code { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 520px) { .sc-code pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
+@media (prefers-reduced-motion: reduce) { .hm-card { transition: none; } }
