@@ -52,6 +52,7 @@ async function startNetwork({ privateKey, issuer = 'https://openvibe.network', c
         const token = serviceAuth.signServiceToken({
             iss: issuer, sub: String(u.id), subject_id: u.subject, username: u.username, display_name: u.display_name,
             role: u.role, aud: ['openvibe.network'], iat: now, exp: now + ttl, jti: `tok_${crypto.randomBytes(8).toString('hex')}`,
+            ...(u.avatar_url ? { avatar_url: u.avatar_url } : {}), ...(u.profile_color ? { profile_color: u.profile_color } : {}),
         }, privateKey);
         st.tokens.push(token);
         return token;

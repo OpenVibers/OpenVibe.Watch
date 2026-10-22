@@ -26,10 +26,27 @@ const FLOW_COOKIE = 'watch_oauth';
 const HINT_COOKIE = 'ov_sso_hint';
 const FLOW_TTL_MS = 10 * 60 * 1000;
 
-/** Same-site relative paths only (never protocol-relative, never another origin). */
-function sanitizeNext(next) {
+/** This site's own origin (BASE_URL). */
+function ownOrigins(config) {
+    const out = new Set();
+    try { if (config && config.baseUrl) out.add(new URL(config.baseUrl).origin); } catch { /* not a URL */ }
+    return out;
+}
+
+/**
+ * Same-site relative paths only (never protocol-relative, never another origin). An absolute URL on this site's own
+ * origin counts as its path: the shared navbar's silent sign-in sends the whole page address, and until 2026-10-22
+ * that landed on the home page.
+ */
+function sanitizeNext(next, config) {
     // Browsers drop tab/newline and read a backslash as "/": "/<TAB>/evil.com" would leave the site.
     if (typeof next === 'string' && /[\u0000-\u001f\u007f\\]/.test(next)) return '/';
+    if (typeof next === 'string' && /^https?:\/\//i.test(next)) {
+        let u = null;
+        try { u = new URL(next); } catch { return '/'; }
+        if (!ownOrigins(config).has(u.origin)) return '/';
+        next = `${u.pathname}${u.search}${u.hash}`;
+    }
     if (typeof next !== 'string' || !/^\/(?!\/|\\)/.test(next) || next.length > 500) return '/';
     return next;
 }
@@ -100,7 +117,7 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
         const flowCookie = () => ({ ...cookieBase(), path: '/auth', maxAge: FLOW_TTL_MS });
 
         r.get('/login', async (req, res) => {
-            const next = sanitizeNext(req.query.next);
+            const next = sanitizeNext(req.query.next, config);
             const started = await sdk.startAuthorization({
                 network: config.networkUrl,
                 clientId: config.oauth.clientId,
@@ -118,7 +135,7 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             let flow = null;
             try { flow = JSON.parse(req.cookies[FLOW_COOKIE] || 'null'); } catch { flow = null; }
             res.clearCookie(FLOW_COOKIE, { ...cookieBase(), path: '/auth' });
-            const next = flow ? sanitizeNext(flow.next) : '/';
+            const next = flow ? sanitizeNext(flow.next, config) : '/';
             const query = new URLSearchParams();
             for (const [k, v] of Object.entries(req.query)) query.set(k, String(v));
             let code;
@@ -154,8 +171,11 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
                     username: typeof claims.username === 'string' ? claims.username : null,
                     displayName: typeof claims.display_name === 'string' ? claims.display_name : null,
                     role: typeof claims.role === 'string' ? claims.role : null,
+                    avatarUrl: claims.avatar_url, profileColor: claims.profile_color,
                 });
                 setSessionCookie(res, session);
+                // Whatever this browser kept of the site was drawn for a guest: drop it.
+                res.set('Clear-Site-Data', '"cache"');
                 return res.redirect(next);
             } catch (err) {
                 log.warn(`[sso] sign-in refused: ${(err && err.code) || (err && err.message) || err}`);
@@ -176,7 +196,7 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
         r.get('/logout', (req, res, next) => {
             if (sameOriginRequest(req)) return next();
             res.set('Cache-Control', cache.htmlHeaders({ private: true }));
-            const q = req.query.next ? `?next=${encodeURIComponent(sanitizeNext(req.query.next))}` : '';
+            const q = req.query.next ? `?next=${encodeURIComponent(sanitizeNext(req.query.next, config))}` : '';
             return res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Sign out</title><meta name="viewport" content="width=device-width,initial-scale=1">`
                 + `<form method="post" action="/auth/logout${q}" style="font:16px system-ui;margin:3em auto;max-width:24em;text-align:center">`
                 + `<p>Sign out of OpenVibe.Watch?</p><button type="submit">Sign out</button> <a href="/">Cancel</a></form>`);
@@ -186,7 +206,8 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             const token = req.cookies && req.cookies[SESSION_COOKIE];
             if (token) { try { await sessions.revoke(token); } catch { /* the cookie is cleared anyway */ } }
             clearSessionCookie(res);
-            return res.redirect(303, sanitizeNext(req.query.next));
+            res.set('Clear-Site-Data', '"cache"');
+            return res.redirect(303, sanitizeNext(req.query.next, config));
         });
 
         r.get('/me', (req, res) => {
@@ -196,7 +217,7 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             if (!c[SESSION_COOKIE] && !req.get('authorization')) return res.json({ user: null });
             const v = req.viewer;
             if (!v || v.kind !== 'user') return res.status(401).json({ error: 'Not signed in' });
-            return res.json({ user: { username: v.username, display_name: v.displayName, subject_id: v.subject, role: v.role } });
+            return res.json({ user: { username: v.username, display_name: v.displayName, subject_id: v.subject, role: v.role, avatar_url: v.avatarUrl || null, profile_color: v.profileColor || null } });
         });
         return r;
     }
@@ -204,4 +225,4 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
     return { middleware, routes, verifySessionToken, SESSION_COOKIE, FLOW_COOKIE };
 }
 
-module.exports = { createSso, sanitizeNext, parseCookies, SESSION_COOKIE, FLOW_COOKIE, HINT_COOKIE };
+module.exports = { createSso, sanitizeNext, ownOrigins, parseCookies, SESSION_COOKIE, FLOW_COOKIE, HINT_COOKIE };
