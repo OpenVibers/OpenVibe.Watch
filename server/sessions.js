@@ -17,8 +17,8 @@ const hash = (token) => crypto.createHash('sha256').update(String(token)).digest
 
 function createSessions({ db, now = () => Date.now(), ttlMs = DEFAULT_TTL_MS }) {
     const st = {
-        insert: db.prepare(`INSERT INTO web_sessions (id, subject, username, display_name, role, created_at, last_seen_at, expires_at, revoked_at)
-            VALUES (@id, @subject, @username, @display_name, @role, @created_at, @last_seen_at, @expires_at, NULL)`),
+        insert: db.prepare(`INSERT INTO web_sessions (id, subject, username, display_name, role, avatar_url, profile_color, created_at, last_seen_at, expires_at, revoked_at)
+            VALUES (@id, @subject, @username, @display_name, @role, @avatar_url, @profile_color, @created_at, @last_seen_at, @expires_at, NULL)`),
         get: db.prepare('SELECT * FROM web_sessions WHERE id = ?'),
         touch: db.prepare('UPDATE web_sessions SET last_seen_at = ? WHERE id = ?'),
         revoke: db.prepare('UPDATE web_sessions SET revoked_at = ? WHERE id = ?'),
@@ -32,7 +32,7 @@ function createSessions({ db, now = () => Date.now(), ttlMs = DEFAULT_TTL_MS }) 
      * Create a session for a verified person. Returns the cookie token (shown once, never stored).
      * The subject is required: a session with nobody's subject owns nothing and is refused.
      */
-    async function create({ subject, username = null, displayName = null, role = null }) {
+    async function create({ subject, username = null, displayName = null, role = null, avatarUrl = null, profileColor = null }) {
         if (typeof subject !== 'string' || !subject) throw new Error('a session needs a subject');
         const token = newToken();
         const t = now();
@@ -41,6 +41,9 @@ function createSessions({ db, now = () => Date.now(), ttlMs = DEFAULT_TTL_MS }) 
             username: username == null ? null : String(username).slice(0, 64),
             display_name: displayName == null ? null : String(displayName).slice(0, 80),
             role: role == null ? null : String(role).slice(0, 32),
+            // The navbar's avatar (an https image) and colour (hex), from Network's token at sign-in.
+            avatar_url: typeof avatarUrl === 'string' && /^https:\/\/[^\s"'<>]{1,500}$/.test(avatarUrl) ? avatarUrl : null,
+            profile_color: typeof profileColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(profileColor) ? profileColor : null,
             created_at: t, last_seen_at: t, expires_at: t + ttlMs,
         });
         return token;
@@ -85,6 +88,8 @@ function createSessions({ db, now = () => Date.now(), ttlMs = DEFAULT_TTL_MS }) 
             username: row.username || null,
             displayName: row.display_name || row.username || 'you',
             role: row.role || 'user',
+            avatarUrl: row.avatar_url || null,
+            profileColor: row.profile_color || null,
         };
     }
 

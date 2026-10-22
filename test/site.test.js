@@ -62,6 +62,8 @@ t('the signed-out pages say what Watch is and ask for a sign-in', async () => {
 
 t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () => {
     const who = svc.network.addUser('ada');   // same username, distinct subject for this flow test
+    who.avatar_url = 'https://openvibe.media/o/med_01JABCDEFGHJKMNPQRSTVWXYZ0';
+    who.profile_color = '#0af';
     const out = await svc.login(who);
     assert.strictEqual(out.status, 302);
     assert.strictEqual(out.location, '/watches');
@@ -72,6 +74,8 @@ t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () =
     assert.strictEqual(meRes.status, 200);
     assert.strictEqual(meRes.json().user.subject_id, who.subject);
     assert.strictEqual(meRes.json().user.username, 'ada');
+    // The navbar's avatar and colour come along, from Network's token at sign-in (it drew an initial before 2026-10-22).
+    assert.deepStrictEqual([meRes.json().user.avatar_url, meRes.json().user.profile_color], [who.avatar_url, '#0af']);
 
     // A garbage session cookie is a guest, not an error.
     const guest = await svc.get('/auth/me', { cookie: 'watch_session=nonsense' });
@@ -83,8 +87,15 @@ t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () =
     // Sign-out revokes the session: the same cookie no longer reads a person.
     const bye = await svc.get('/auth/logout', { cookie: out.cookie, method: 'POST', form: {} });
     assert.strictEqual(bye.status, 303);
+    assert.strictEqual(bye.headers.get('clear-site-data'), '"cache"', 'what the browser kept of the site is dropped');
     const after = await svc.get('/watches', { cookie: out.cookie });
     assert.match(after.text, /Sign in with OpenVibe/);
+
+    // The navbar's quiet sign-in sends the whole page address: it comes back to that page, not the home page.
+    const { sanitizeNext } = require('../server/auth/sso');
+    const cfg = { baseUrl: 'https://openvibe.watch' };
+    assert.strictEqual(sanitizeNext('https://openvibe.watch/watches/w1?tab=runs', cfg), '/watches/w1?tab=runs');
+    for (const v of ['https://evil.com/x', 'https://openvibe.watch.evil.com/x', 'https://openvibe.watch//evil.com', 'http://openvibe.watch/x']) assert.strictEqual(sanitizeNext(v, cfg), '/', v);
 
     // The state must match the browser that started: a callback with the wrong state is refused.
     const started = await svc.get('/auth/login?next=%2Fwatches');
