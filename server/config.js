@@ -70,6 +70,9 @@ function load(env = process.env) {
 
         // PostgreSQL (ADR-035): DATABASE_URL serves (PgBouncer), DATABASE_DIRECT_URL migrates (owner role).
         db: { url: env.DATABASE_URL || '', directUrl: env.DATABASE_DIRECT_URL || '' },
+        // OpenVibe.Search, read anonymously for the home page's ready-made watches (server/http/network-reads.js).
+        // Off outside production unless WATCH_SEARCH_URL names one, so tests and local runs fetch nothing.
+        search: { url: strip(env.WATCH_SEARCH_URL || (isProduction ? 'https://search.openvibe.network' : '')) },
 
         events: {
             url: strip(env.EVENTS_URL || ''),

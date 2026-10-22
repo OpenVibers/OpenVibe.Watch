@@ -14,7 +14,7 @@ const seo = require('openvibe-shared/seo');
 const cache = require('openvibe-shared/cache-policy');
 
 const SITE_NAME = 'OpenVibe.Watch';
-const DESCRIPTION = 'OpenVibe.Watch — get told when a page, a feed or an API changes, or when a webhook arrives. Define what to watch and the condition that fires; Watch checks on the cadence you pick (or the moment it is called) and records every check.';
+const DESCRIPTION = 'Get told when a page, a price, a feed or an API changes, or when a channel goes live. Watch checks politely on your schedule and keeps every check.';
 const DISALLOW = ['/auth/', '/watches'];
 
 const PAGE_TEXT = {
