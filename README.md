@@ -544,6 +544,6 @@ POSTs have their own per-address limit zones (nginx refuses `limit_req` inside `
 
 <!-- versions:start -->
 - openvibe-contracts: v0.214.0
-- openvibe-sdk: v0.64.0
+- openvibe-sdk: v0.65.0
 - openvibe-shared: v4.13.0
 <!-- versions:end -->
