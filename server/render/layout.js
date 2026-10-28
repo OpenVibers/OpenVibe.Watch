@@ -60,7 +60,7 @@ function renderPage(o) {
         logoutUrl: '/auth/logout?next={path}',
         notificationsRealtime: true,
     };
-    const footer = { service: 'watch', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' };
+    const footer = { service: 'watch', variant: 'auto', path: o.path, mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' };   // full on the front page only (Shared 4.19)
     const account = signedIn
         ? html`Signed in as <strong>${viewer.displayName || viewer.username || 'you'}</strong> · <a href="/auth/logout?next=${loginNext}">Sign out</a>`
         : html`<a href="/auth/login?next=${loginNext}">Sign in with OpenVibe</a>`;
