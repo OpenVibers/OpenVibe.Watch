@@ -174,8 +174,8 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
                     avatarUrl: claims.avatar_url, profileColor: claims.profile_color,
                 });
                 setSessionCookie(res, session);
-                // Whatever this browser kept of the site was drawn for a guest: drop it.
-                res.set('Clear-Site-Data', '"cache"');
+                // No Clear-Site-Data here or on sign-out: Chrome holds such an answer (and the cookies it sets) until the
+                // cache is cleared, which on phones left people on the account chooser with no session (2026-10-28).
                 return res.redirect(next);
             } catch (err) {
                 log.warn(`[sso] sign-in refused: ${(err && err.code) || (err && err.message) || err}`);
@@ -206,7 +206,6 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             const token = req.cookies && req.cookies[SESSION_COOKIE];
             if (token) { try { await sessions.revoke(token); } catch { /* the cookie is cleared anyway */ } }
             clearSessionCookie(res);
-            res.set('Clear-Site-Data', '"cache"');
             return res.redirect(303, sanitizeNext(req.query.next, config));
         });
 

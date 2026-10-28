@@ -87,7 +87,7 @@ t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () =
     // Sign-out revokes the session: the same cookie no longer reads a person.
     const bye = await svc.get('/auth/logout', { cookie: out.cookie, method: 'POST', form: {} });
     assert.strictEqual(bye.status, 303);
-    assert.strictEqual(bye.headers.get('clear-site-data'), '"cache"', 'what the browser kept of the site is dropped');
+    assert.strictEqual(bye.headers.get('clear-site-data'), null, 'no Clear-Site-Data: Chrome holds such an answer until its cache is cleared (phones hung, 2026-10-28)');
     const after = await svc.get('/watches', { cookie: out.cookie });
     assert.match(after.text, /Sign in with OpenVibe/);
 
