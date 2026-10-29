@@ -31,3 +31,25 @@
 .sc-code { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 520px) { .sc-code pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
 @media (prefers-reduced-motion: reduce) { .hm-card { transition: none; } }
+
+/* Phones (2026-10-29): a taste and a door. The kinds, the channels and each ready-made group are one sideways row
+   (every card is still there); how it checks and the code fold under their headings; the questions are closed. */
+.hm-fold { border: 1px solid var(--border, rgba(255, 255, 255, .08)); border-radius: 16px; background: var(--bg-secondary, #101828); }
+.hm-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; padding: 0 16px; cursor: pointer; list-style: none; }
+.hm-fold > summary::-webkit-details-marker { display: none; }
+.hm-fold > summary h2 { margin: 0; font-size: 1.15rem; }
+.hm-fold > summary span { color: var(--text-muted, #7386a3); font-weight: 600; font-size: .86rem; text-align: right; }
+.hm-fold > summary:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: -2px; border-radius: 16px; }
+.hm-fold .sc-sec { margin: 0; max-width: none; padding: 0 16px 16px; }
+.hm-fold-body { padding: 0 16px 16px; }
+.hm-qa > summary { list-style: none; cursor: pointer; }
+.hm-qa > summary::-webkit-details-marker { display: none; }
+.hm-qa > summary h3::after { content: '+'; float: right; margin-left: 10px; color: var(--text-muted, #7386a3); font-weight: 400; }
+.hm-qa[open] > summary h3::after { content: '\2212'; }
+@media (max-width: 599px) {
+  #start .sc-grid, .hm-grid { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none; gap: 10px; margin-left: -16px; margin-right: -16px; padding: 0 16px 4px; }
+  #start .sc-grid::-webkit-scrollbar, .hm-grid::-webkit-scrollbar { display: none; }
+  #start .sc-grid > * { flex: 0 0 80%; min-width: 0; scroll-snap-align: start; }
+  .hm-grid > li { flex: 0 0 70%; scroll-snap-align: start; }
+  .hm-fold > summary span { display: none; }
+}

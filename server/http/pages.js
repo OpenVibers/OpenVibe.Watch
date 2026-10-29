@@ -592,7 +592,7 @@ ${channels.length ? html`<section class="sc-sec" aria-labelledby="h-live"><div c
 <section class="sc-sec" aria-labelledby="h-ready"><h2 id="h-ready">Ready-made watches</h2>
 <p class="sc-lede">Each opens the form already filled in. Check it, change anything, and save.</p>
 ${readyGroups.map((g) => html`<h3 class="hm-group">${g.title}</h3><p class="hm-group-lede">${g.lede}</p><ul class="hm-grid">${g.items}</ul>`)}</section>
-${raw(showcase.steps({
+<section class="sc-sec" aria-labelledby="h-check"><details class="hm-fold"><summary><h2 id="h-check">How it checks</h2><span>from a URL to a notification, politely</span></summary>${raw(showcase.steps({
                 id: 'steps',
                 title: 'From a URL to a notification',
                 items: [
@@ -602,26 +602,23 @@ ${raw(showcase.steps({
                     { title: 'Get told', text: 'When the condition fires, the notification arrives on your OpenVibe account, and the watch page shows every check and the value it found.' },
                 ],
             }))}
-<section class="sc-sec" aria-labelledby="h-check"><h2 id="h-check">How it checks</h2>
-<ul class="facts">
+<div class="hm-fold-body"><ul class="facts">
 <li><strong>The cheapest way first.</strong> If the site gave Watch an ETag or Last-Modified, the next check asks with <code>If-None-Match</code>/<code>If-Modified-Since</code> and a “not modified” answer costs no body. When only “did it change?” matters, a <code>HEAD</code> is tried while a validator is held: two headers instead of a page.</li>
 <li><strong>Feeds and APIs before pages.</strong> The carrier order is binding: an event or webhook when one exists, then the etag, then a feed, then an API, and only then an expensive browser check. A watch checks the kind its source names.</li>
 <li><strong>Polite per-site spacing.</strong> Two requests to one host never leave at once, and no two requests to a host are closer than the host’s minimum interval — whatever the watch says.</li>
 <li><strong>Never faster than your cadence.</strong> A watch is due on the cadence you pick; a failing site is checked less often (backoff), and a site that asks Watch to wait is waited for (<code>Retry-After</code>).</li>
 <li><strong>Every check is recorded.</strong> Read, no change, changed, condition met, a site error, a timeout, an unreadable answer, a wait, a skipped kind — the state is kept with the value, the time and a capped snapshot, and the watch is re-armed on every path.</li>
 </ul>
-<p><a href="/how-it-works">The full picture, in plain words</a>.</p></section>
-${raw(showcase.code({
-                id: 'api',
-                title: 'Make watches from your own code',
+<p><a href="/how-it-works">The full picture, in plain words</a>.</p></div></details></section>
+<section class="sc-sec" id="api" aria-labelledby="h-api"><details class="hm-fold"><summary><h2 id="h-api">Make watches from your own code</h2><span>the API, with curl</span></summary>${raw(showcase.code({
                 lede: 'The site and the API are the same: create, pause and check watches and read every observation with a token that holds the watch.* capabilities.',
                 samples: [
                     { label: 'Create a watch (curl)', lang: 'sh', code: `curl -X POST ${config.baseUrl}/api/v1/watches \\\n  -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  -H 'Content-Type: application/json' \\\n  -d '{"name": "Node.js releases",\n       "source": {"kind": "feed", "url": "https://nodejs.org/en/feed/releases.xml"},\n       "cadence": {"every_sec": 3600},\n       "extraction": {"kind": "json", "value_path": "latest"},\n       "condition": {"op": "changed"},\n       "action": [{"kind": "notification"}]}'` },
                     { label: 'Read what it found (curl)', lang: 'sh', code: `# Your watches\ncurl -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  ${config.baseUrl}/api/v1/watches\n\n# Every value one watch observed, newest first\ncurl -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  ${config.baseUrl}/api/v1/watches/wch_…/observations` },
                 ],
-            }))}
+            }))}</details></section>
 <section class="sc-sec" id="faq" aria-labelledby="h-faq"><h2 id="h-faq">Questions</h2>
-<div class="hm-faq">${FAQ.map(([q, a]) => html`<div class="hm-qa"><h3>${q}</h3><p>${a}</p></div>`)}</div></section>
+<div class="hm-faq">${FAQ.map(([q, a], i) => html`<details class="hm-qa"${i === 0 ? raw(' open') : ''}><summary><h3>${q}</h3></summary><p>${a}</p></details>`)}</div></section>
 ${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-yours">Your watches</h2>
 <p>${summary.total ? html`You have <strong>${summary.total}</strong> watch${summary.total === 1 ? '' : 'es'}: ${summary.active} active, ${summary.paused} paused, ${summary.disabled} disabled, ${summary.failed} failing.` : 'You have no watches yet.'} <a href="/watches">See them</a> or <a href="/watches/new?template=page">start one</a>.</p></section>` : ''}`,
         });
