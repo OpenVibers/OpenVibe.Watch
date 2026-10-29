@@ -9,7 +9,7 @@
   "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
   "contracts": "openvibe-contracts v0.222.0 (actor-agent requires v0.143.0)",
   "sdk": "openvibe-sdk v0.67.0",
-  "shared": "openvibe-shared v4.34.0",
+  "shared": "openvibe-shared v4.37.0",
   "capabilities": [
     "watch.watch.read",
     "watch.watch.manage",
@@ -82,5 +82,5 @@
     "usage readings (check operations): one platform.usage-sample@1 check-operation reading per completed check run, relayed to OpenVibe.Billing (billing.usage.record) by openvibe-sdk/usage; off by default (WATCH_BILLING_INTERVAL_MS)",
     "the public site: Network sign-in (PKCE S256, web_sessions with only the token hash), server-rendered pages complete without JavaScript, the four create templates, watch management, observation history and check runs, how-it-works and the changelog, robots/sitemap/llms.txt"
   ],
-  "updated": "2026-10-28"
+  "updated": "2026-10-29"
 }
