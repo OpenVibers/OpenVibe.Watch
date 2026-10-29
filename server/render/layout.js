@@ -77,6 +77,9 @@ function renderPage(o) {
         siteName: SITE_NAME,
         description: o.description || `${SITE_NAME} — ${TAGLINE}`,
         canonical,
+        // The head names the page's own Markdown twin (openvibe-shared/agent-layer).
+        agentLayer: true,
+        llms: '/llms.txt',
         robots: o.index ? 'index, follow' : 'noindex, nofollow',
         jsonLd: (o.jsonLd || []).filter(Boolean),
         home: '/',

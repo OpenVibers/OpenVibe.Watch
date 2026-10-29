@@ -147,7 +147,24 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
         if (!req.path.startsWith('/api') && !req.path.startsWith('/auth')) res.setHeader('Content-Security-Policy', CSP);
         next();
     });
-    app.use(createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, actions, log, webhookSources }));
+
+    const pageRoutes = createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, actions, log, webhookSources });
+    // The agent layer (openvibe-shared/agent-layer): /.well-known/agent.json and the Markdown twins of the
+    // public pages. Mounted before the page routes but gated to twin requests only, so a browser keeps the
+    // page's own render (signed in or out) and only a twin request reaches the agent layer. The manifest
+    // path is matched exactly, so /.well-known/security.txt and the rest of /.well-known/ are untouched.
+    const agentLayer = require('openvibe-shared/agent-layer');
+    agentLayer.mount({ use: (mw) => app.use((req, res, next) => {
+        const p = req.path || '';
+        const twin = p.endsWith('.md') || req.query.format === 'markdown' || /text\/markdown/.test(String(req.get('accept') || ''));
+        if (p !== '/.well-known/agent.json' && !twin) return next();
+        return mw(req, res, next);
+    }) }, {
+        descriptor: require('./agent-descriptor'),
+        render: require('./agent-pages').createAgentPages({ router: pageRoutes }).renderPublicPage,
+    });
+
+    app.use(pageRoutes);
 
     app.use((req, res) => send(res, 404, {
         viewer: req.viewer, config, path: req.originalUrl, title: 'Not found',
