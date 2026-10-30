@@ -91,6 +91,7 @@ ${appIcon.headTags({ site: 'watch' })}
 ${(o.styles || []).map((name) => `<link rel="stylesheet" href="${esc(ovServe.url(name))}">`).join('\n')}
 <link rel="stylesheet" href="${asset('css/app.css')}">
 ${(o.css || []).map((rel) => `<link rel="stylesheet" href="${asset(rel)}">`).join('\n')}
+${(o.inlineStyles || []).map((css) => `<style>${css}</style>`).join('\n')}
 ${render(scripts)}
 <meta name="ov-boost" content="watch@${RELEASE}">
 <script src="${ovServe.url('boost.js')}" data-main="#main" defer></script>`,
