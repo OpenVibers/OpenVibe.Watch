@@ -24,6 +24,7 @@ const { send } = require('../render/layout');
 const W = require('../render/watch');
 const changelog = require('../render/changelog');
 const { createDiscoveryRoutes, homeJsonLd, DESCRIPTION } = require('./discovery');
+const S = require('../render/short');
 const { createNetworkReads } = require('./network-reads');
 const seo = require('openvibe-shared/seo');
 
@@ -567,11 +568,14 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
         const blogs = [...postRows.reduce((m, p) => (m.has(p.blog) ? m : m.set(p.blog, p)), new Map()).values()].slice(0, 3);
         const card = ({ title, detail, href, label, extra = '' }) => html`<li class="hm-card"><div class="hm-card-body"><b>${title}</b>${detail ? html`<span>${detail}</span>` : ''}${raw(extra)}</div><a class="hm-go" href="${href}">${label}</a></li>`;
         const readyGroups = [
-            plans.length ? { title: 'Hosting prices', lede: 'Plans on OpenVibe.Host, read from its catalog API.', items: plans.map((p) => card({ title: p.title, detail: p.detail, href: newWatch({ template: 'json', url: `${p.origin}/api/v1/catalog/plans/${p.id}`, value_path: 'plan.price_monthly', op: 'changed', name: `Price: ${p.title}`.slice(0, 80) }), label: 'Tell me when the price changes' })) } : null,
-            { title: 'Feeds', lede: 'Told the moment a new item appears.', items: FEEDS.map((f) => card({ title: f.title, detail: f.detail, href: newWatch({ template: 'feed', url: f.url, name: f.title.slice(0, 80) }), label: 'Watch this feed' })) },
-            blogs.length ? { title: 'Blogs on OpenVibe', lede: 'Woken by the blog.post.published event, so nothing is polled.', items: blogs.map((b) => card({ title: `New posts on @${b.blog}`, detail: `Latest: ${b.title}`, href: newWatch({ template: 'event', event: 'blog.post.published', event_filter: b.blog, name: `New posts on @${b.blog}` }), label: 'Tell me about new posts' })) } : null,
+            plans.length ? { id: 'prices', title: 'Hosting prices', lede: 'Plans on OpenVibe.Host, read from its catalog API.', items: plans.map((p) => card({ title: p.title, detail: p.detail, href: newWatch({ template: 'json', url: `${p.origin}/api/v1/catalog/plans/${p.id}`, value_path: 'plan.price_monthly', op: 'changed', name: `Price: ${p.title}`.slice(0, 80) }), label: 'Tell me when the price changes' })) } : null,
+            { id: 'feeds', title: 'Feeds', lede: 'Told the moment a new item appears.', items: FEEDS.map((f) => card({ title: f.title, detail: f.detail, href: newWatch({ template: 'feed', url: f.url, name: f.title.slice(0, 80) }), label: 'Watch this feed' })) },
+            blogs.length ? { id: 'blogs', title: 'Blogs on OpenVibe', lede: 'Woken by the blog.post.published event, so nothing is polled.', items: blogs.map((b) => card({ title: `New posts on @${b.blog}`, detail: `Latest: ${b.title}`, href: newWatch({ template: 'event', event: 'blog.post.published', event_filter: b.blog, name: `New posts on @${b.blog}` }), label: 'Tell me about new posts' })) } : null,
         ].filter(Boolean);
         const faqLd = seo.jsonLd.faq(FAQ.map(([q, a]) => ({ q, a })));
+        // The home on a phone (the owner's short-pages rule, 2026-10-30): the ready-made watches are chips, one group
+        // at a time, and every group stays in the page for crawlers.
+        const readyPanes = readyGroups.map((g) => ({ id: g.id, label: g.title, html: html`<h3 class="hm-group">${g.title}</h3><p class="hm-group-lede">${g.lede}</p><ul class="hm-grid">${g.items}</ul>`.s }));
         page(req, res, {
             index: true,
             cache: signedIn(req) ? null : cache.htmlHeaders({ maxAge: 300 }),
@@ -579,6 +583,8 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
             description: DESCRIPTION,
             styles: [showcase.STYLESHEET],
             css: ['css/home.css'],
+            // The rule that shows the picked group: one per group, so the CSS is written for this page.
+            inlineStyles: [`@supports selector(:has(*)){@media (max-width:640px){${S.pickRules('ready', readyPanes.map((p) => p.id))}}}`],
             body: html`${raw(hero)}
 ${raw(showcase.features({
                 id: 'start',
@@ -591,7 +597,7 @@ ${channels.length ? html`<section class="sc-sec" aria-labelledby="h-live"><div c
 <ul class="hm-grid">${channels.map((c) => html`<li class="hm-card"><div class="hm-card-body"><b><a href="${c.url}">@${c.username}</a></b><span>${[c.category, c.followers ? `${c.followers} follower${c.followers === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span>${c.live ? raw('<span class="hm-live">Live now</span>') : ''}</div><a class="hm-go" href="${newWatch({ template: 'event', event: 'live.stream.started', event_filter: c.username, name: `@${c.username} goes live` })}">Tell me when they go live</a></li>`)}</ul></section>` : ''}
 <section class="sc-sec" aria-labelledby="h-ready"><h2 id="h-ready">Ready-made watches</h2>
 <p class="sc-lede">Each opens the form already filled in. Check it, change anything, and save.</p>
-${readyGroups.map((g) => html`<h3 class="hm-group">${g.title}</h3><p class="hm-group-lede">${g.lede}</p><ul class="hm-grid">${g.items}</ul>`)}</section>
+${raw(S.pickBlock({ key: 'ready', label: 'Ready-made watches', panes: readyPanes }))}</section>
 <section class="sc-sec" aria-labelledby="h-check"><details class="hm-fold"><summary><h2 id="h-check">How it checks</h2><span>from a URL to a notification, politely</span></summary>${raw(showcase.steps({
                 id: 'steps',
                 title: 'From a URL to a notification',
@@ -617,8 +623,7 @@ ${readyGroups.map((g) => html`<h3 class="hm-group">${g.title}</h3><p class="hm-g
                     { label: 'Read what it found (curl)', lang: 'sh', code: `# Your watches\ncurl -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  ${config.baseUrl}/api/v1/watches\n\n# Every value one watch observed, newest first\ncurl -H "Authorization: Bearer $OPENVIBE_TOKEN" \\\n  ${config.baseUrl}/api/v1/watches/wch_…/observations` },
                 ],
             }))}</details></section>
-<section class="sc-sec" id="faq" aria-labelledby="h-faq"><h2 id="h-faq">Questions</h2>
-<div class="hm-faq">${FAQ.map(([q, a], i) => html`<details class="hm-qa"${i === 0 ? raw(' open') : ''}><summary><h3>${q}</h3></summary><p>${a}</p></details>`)}</div></section>
+<section class="sc-sec" id="faq" aria-labelledby="h-faq">${raw(S.foldBlock({ id: 'faq-fold', head: '<h2 id="h-faq">Questions</h2>', html: html`<div class="hm-faq">${FAQ.map(([q, a], i) => html`<details class="hm-qa"${i === 0 ? raw(' open') : ''}><summary><h3>${q}</h3></summary><p>${a}</p></details>`)}</div>`.s }))}</section>
 ${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-yours">Your watches</h2>
 <p>${summary.total ? html`You have <strong>${summary.total}</strong> watch${summary.total === 1 ? '' : 'es'}: ${summary.active} active, ${summary.paused} paused, ${summary.disabled} disabled, ${summary.failed} failing.` : 'You have no watches yet.'} <a href="/watches">See them</a> or <a href="/watches/new?template=page">start one</a>.</p></section>` : ''}`,
         });
