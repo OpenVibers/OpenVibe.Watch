@@ -7,9 +7,10 @@
  */
 const assert = require('assert');
 const http = require('http');
-const { createNetworkSender } = require('openvibe-sdk/account-data');
+const { createNetworkSender, uncovered } = require('openvibe-sdk/account-data');
 const { signDeliveryHeaders } = require('openvibe-sdk/events');
 const { boot, request, userToken, site, suite, watchDef, newUser } = require('./helpers');
+const { TABLES } = require('../server/account-data');
 
 const t = suite('account-data');
 const SECRET = `whsec_${'fixture'.repeat(6)}`;
@@ -54,6 +55,14 @@ t('boot, and the person\'s watches, checks and sessions', async () => {
     }
     await svc.signIn({ subject: me, username: 'me' });
     assert.strictEqual(await count('SELECT count(*) FROM check_runs c JOIN watches w ON w.id = c.watch_id WHERE w.owner_sub = $1', [me]), 1);
+});
+
+t('every table that names a person is covered or exempted with a reason', async () => {
+    const missing = await uncovered(svc.db, {
+        tables: TABLES,
+        exempt: { account_data_events: 'the ledger of requests itself: which export and deletion Watch applied' },
+    });
+    assert.deepStrictEqual(missing, [], `a table with a person column is neither covered nor exempted: ${missing.join(', ')}`);
 });
 
 t('the export carries the person\'s watches and no session', async () => {
