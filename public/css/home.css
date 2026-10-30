@@ -46,6 +46,14 @@
 .hm-qa > summary::-webkit-details-marker { display: none; }
 .hm-qa > summary h3::after { content: '+'; float: right; margin-left: 10px; color: var(--text-muted, #7386a3); font-weight: 400; }
 .hm-qa[open] > summary h3::after { content: '\2212'; }
+/* 2026-10-29 touch targets: summaries are 44 px tall; card links and lone labels gain vertical-only hit areas. */
+@media (pointer: coarse) {
+  .hm-qa > summary { min-height: 44px; }
+  .hm-more { display: inline-flex; align-items: center; min-height: 44px; }
+  .hm-go, .hm-card-body a { position: relative; }
+  .hm-go::after { content: ''; position: absolute; left: 0; right: 0; top: -11px; bottom: -11px; }
+  .hm-card-body a::after { content: ''; position: absolute; left: 0; right: 0; top: -13px; bottom: -13px; }
+}
 @media (max-width: 599px) {
   #start .sc-grid, .hm-grid { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none; gap: 10px; margin-left: -16px; margin-right: -16px; padding: 0 16px 4px; }
   #start .sc-grid::-webkit-scrollbar, .hm-grid::-webkit-scrollbar { display: none; }
