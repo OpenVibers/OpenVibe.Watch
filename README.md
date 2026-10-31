@@ -313,11 +313,12 @@ retention.
 
 ## API (bearer tokens, one capability per route)
 
-Callers present an OpenVibe.Network token for audience `openvibe.watch`: a service's
-client-credentials token (judged by its `cap` claim with the contracts grant rule) or a signed-in
-person's or agent's token (`usr_…`, `agt_…` — a watch is theirs, and ownership scoping is the
-authority). A first-party service (`svc:…`) may present `X-OV-Subject: usr_…` to act for a person;
-an app or module may not.
+Callers present an OpenVibe.Network token: a service's client-credentials token for audience
+`openvibe.watch` (judged by its `cap` claim with the contracts grant rule), or a signed-in person's
+or agent's token — either a token minted for `openvibe.watch` or the Network session token the
+signed-in site holds (`aud: openvibe.network`); a watch is theirs, owned by the canonical
+`usr_…`/`agt_…` `subject_id`, and ownership scoping is the authority. A first-party service
+(`svc:…`) may present `X-OV-Subject: usr_…` to act for a person; an app or module may not.
 
 | Capability | Routes |
 |---|---|

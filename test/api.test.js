@@ -53,6 +53,19 @@ t('every route needs a token, and the one capability it serves', async () => {
     assert.strictEqual((await api('GET', `/api/v1/watches/${ghost}/checks`, { token: OBSERVER })).status, 404);
 });
 
+t('a person\'s Network session token works, and owns the watch by its canonical subject', async () => {
+    const who = newUser();
+    // A Network sign-in token: aud openvibe.network, `sub` the numeric account id, `subject_id` the usr_ subject.
+    const session = userToken(who, { aud: 'openvibe.network', extra: { sub: 4242 } });
+    const created = await api('POST', '/api/v1/watches', { token: session, body: mine({ name: 'a session-token watch' }) });
+    assert.strictEqual(created.status, 201, created.text);
+    assert.strictEqual(created.body.watch.owner, who, 'the canonical usr_ subject is the owner, not the numeric account id');
+    const list = await api('GET', '/api/v1/watches', { token: session });
+    assert.ok(list.body.watches.some((w) => w.id === created.body.watch.id), 'the watch is listed for that session');
+    assert.strictEqual((await api('GET', `/api/v1/watches/${created.body.watch.id}`, { token: userToken(other, { aud: 'openvibe.network' }) })).status, 404, 'another person cannot read it');
+    assert.strictEqual((await api('GET', '/api/v1/watches', { token: userToken(who, { aud: 'openvibe.deals' }) })).status, 401, 'a token for another service is still refused');
+});
+
 t('create, read, list: the released contracts on both sides, and the view is the contract', async () => {
     const created = await api('POST', '/api/v1/watches', { token: ME, body: mine({ labels: { room: 'kitchen' } }) });
     assert.strictEqual(created.status, 201, created.text);
