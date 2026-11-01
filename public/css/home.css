@@ -22,7 +22,7 @@
 .hm-go:hover, .hm-go:focus-visible { text-decoration: underline; }
 
 .hm-faq { display: grid; gap: 12px 28px; grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); }
-.hm-qa { padding: 4px 0 14px; border-bottom: 1px solid var(--border, rgba(255, 255, 255, .08)); }
+.hm-qa { padding: 4px 0 14px; border-bottom: 1px solid var(--border, color-mix(in srgb, var(--text-primary, #fff) 8%, transparent)); }
 .hm-qa h3 { margin: 0 0 6px; font-size: 16px; }
 .hm-qa p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--text-secondary, #96a7c2); }
 
