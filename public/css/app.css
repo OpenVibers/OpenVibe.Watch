@@ -84,3 +84,18 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 ul.facts { list-style: none; margin: 12px 0; padding: 0; max-width: none; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
 ul.facts li { margin: 0; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border, #1f2d47); background: var(--bg-card, #131c2e); font-size: .92rem; line-height: 1.5; color: var(--text-secondary, #96a7c2); }
 ul.facts li strong { display: block; margin-bottom: 4px; color: var(--text-primary, #e6edf7); font-size: 1rem; }
+
+/* Tables on a phone (phone sweep, 2026-11-01): a table of three columns or more shows each row as a card, the first
+   cell its title and every other cell named by its column (html.js gives each cell its data-label). Narrower tables
+   stay tables. Nothing is left out and nothing scrolls sideways. */
+@media (max-width: 640px) {
+    .table-wrap:has(> table thead th:nth-child(3)) { overflow: visible; }
+    .table-wrap > table:has(thead th:nth-child(3)) { display: block; }
+    .table-wrap > table:has(thead th:nth-child(3)) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .table-wrap > table:has(thead th:nth-child(3)) tbody { display: grid; gap: 10px; }
+    .table-wrap > table:has(thead th:nth-child(3)) tr { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--border, #1f2d47); border-radius: 14px; background: var(--bg-card, var(--bg-secondary, #101828)); }
+    .table-wrap > table:has(thead th:nth-child(3)) td { display: block; min-width: 0; padding: 0; border: 0; overflow-wrap: anywhere; }
+    .table-wrap > table:has(thead th:nth-child(3)) td:first-child { font-weight: 700; color: var(--text-primary, #e6edf7); }
+    .table-wrap > table:has(thead th:nth-child(3)) td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; margin-bottom: 2px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted, #7386a3); }
+    .table-wrap > table:has(thead th:nth-child(3)) td:empty { display: none; }
+}
