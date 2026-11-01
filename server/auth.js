@@ -11,11 +11,15 @@
  *               watch.* capabilities are released, so the library decides every one of them.
  *
  *   a person    the bearer token of a signed-in user (sub usr_…) or agent (sub agt_…), verified
- *               with openvibe-sdk/auth verifyUserToken for the same issuer and audience. Such a
- *               token carries no capability list: watches are user-defined resources and the guard
- *               that matters is ownership — every route scopes to the acting subject, and another
- *               owner's watch answers 404 (registry.js). A person may therefore use all four watch
- *               capabilities, on their own watches only.
+ *               with openvibe-sdk/auth verifyUserToken for the same issuer. A token may be minted
+ *               for this service's audience (openvibe.watch, as a CLI or app token is) or be the
+ *               Network session token a signed-in site holds (openvibe.network); both prove the
+ *               same person. The canonical usr_…/agt_… subject_id is the owner (a Network session
+ *               token's `sub` is the numeric account id). Such a token carries no capability list:
+ *               watches are user-defined resources and the guard that matters is ownership — every
+ *               route scopes to the acting subject, and another owner's watch answers 404
+ *               (registry.js). A person may therefore use all four watch capabilities, on their
+ *               own watches only.
  *
  * X-OV-Subject, presented by a first-party service (svc:…) that acts for a person (the public site
  * going through Network/Services, or an agent's runtime), names the subject a route acts for; the
@@ -68,8 +72,10 @@ function createAuth({ config, log = console }) {
 
     /** { ok, claims } or { ok: false, code, reason, status }. Every token rule is the SDK's verifyUserToken. */
     async function verifyUser(token) {
+        // A person's token is minted either for this service or by Network sign-in (aud openvibe.network).
+        const audience = [...new Set([config.audience, config.oauth.sessionAudience].filter(Boolean))];
         try {
-            const claims = await verifyUserToken(token, { jwks: config.jwksUrl, issuer: config.issuer, audience: config.audience });
+            const claims = await verifyUserToken(token, { jwks: config.jwksUrl, issuer: config.issuer, audience });
             return { ok: true, claims };
         } catch (err) {
             const code = (err && err.code) || 'token.malformed';
@@ -89,9 +95,11 @@ function createAuth({ config, log = console }) {
             if (!h.startsWith('Bearer ')) return http.sendProblem(res, 401, 'token.missing', { detail: 'a service or user token is required', ctx });
             const token = h.slice(7).trim();
             const payload = tokenPayload(token);
-            if (!payload || typeof payload.sub !== 'string') return http.sendProblem(res, 401, 'token.malformed', { detail: 'not a signed JWT', ctx });
+            // A service principal's sub is svc:…/app:…/mod:…; a Network session token's is the numeric account id,
+            // and its canonical usr_…/agt_… subject_id is the person. Anything else is not a token this API knows.
+            if (!payload || (typeof payload.sub !== 'string' && typeof payload.sub !== 'number')) return http.sendProblem(res, 401, 'token.malformed', { detail: 'not a signed JWT', ctx });
 
-            if (SERVICE_SUB.test(payload.sub)) {
+            if (typeof payload.sub === 'string' && SERVICE_SUB.test(payload.sub)) {
                 // The keys come from the SDK's JWKS client (one per URL, started at boot: the last good keys through a
                 // Network outage, a rotation honoured on an unknown kid); every token rule is openvibe-contracts'
                 // verifyServiceToken (identity.service-token-claims@1, sandbox refused, issuer, audience, expiry).
@@ -108,7 +116,12 @@ function createAuth({ config, log = console }) {
                 const r = await verifyUser(token);
                 if (!r.ok) return http.sendProblem(res, r.status === 503 ? 503 : 401, r.code, { detail: r.reason, ctx });
                 const claims = r.claims;
-                req.principal = { sub: claims.sub, kind: 'person', role: claims.role || null, cap: null, jti: claims.jti || null, subject: null };
+                // Network session tokens name the account in `sub` (numeric) and the person in `subject_id`.
+                const subject = PERSON_SUB.test(String(claims.subject_id || '')) ? String(claims.subject_id) : String(claims.sub);
+                // The owner is always a canonical usr_…/agt_… id: a token naming only a bare account number (or anything
+                // else) owns nothing here, so no watch is ever filed under a name another sign-in could also carry.
+                if (!PERSON_SUB.test(subject)) return http.sendProblem(res, 401, 'token.subject_unknown', { detail: 'the token names no usr_… or agt_… subject', ctx });
+                req.principal = { sub: subject, kind: 'person', role: claims.role || null, cap: null, jti: claims.jti || null, subject: null };
             }
 
             // X-OV-Subject: only a first-party service may name the person it acts for, and only a

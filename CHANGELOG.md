@@ -3,6 +3,14 @@
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 
+## 2026-10-31 — a person's Network session token on the API
+
+- The watch API accepts a signed-in person's Network session token (`aud: openvibe.network`) as a Bearer, the same
+  token the site's SSO verifies, as well as a person/agent token minted for `openvibe.watch`. A first-party service
+  such as Shoes can therefore create a watch with the person's own token instead of a service token. The watch is
+  owned by the token's canonical `usr_…`/`agt_…` `subject_id` (a Network session token's `sub` is the numeric
+  account id), so project delegation and the person-only actions keep working. `server/auth.js`, `test/api.test.js`.
+
 ## 2026-10-13 — check-operation usage readings (plan T5 step 14, Watch slice)
 
 - A completed check queues one `platform.usage-sample@1` reading (metric `check-operation`, quantity 1, unit `check`,
