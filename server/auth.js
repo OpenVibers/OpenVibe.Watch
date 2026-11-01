@@ -118,6 +118,9 @@ function createAuth({ config, log = console }) {
                 const claims = r.claims;
                 // Network session tokens name the account in `sub` (numeric) and the person in `subject_id`.
                 const subject = PERSON_SUB.test(String(claims.subject_id || '')) ? String(claims.subject_id) : String(claims.sub);
+                // The owner is always a canonical usr_…/agt_… id: a token naming only a bare account number (or anything
+                // else) owns nothing here, so no watch is ever filed under a name another sign-in could also carry.
+                if (!PERSON_SUB.test(subject)) return http.sendProblem(res, 401, 'token.subject_unknown', { detail: 'the token names no usr_… or agt_… subject', ctx });
                 req.principal = { sub: subject, kind: 'person', role: claims.role || null, cap: null, jti: claims.jti || null, subject: null };
             }
 

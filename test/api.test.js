@@ -64,6 +64,9 @@ t('a person\'s Network session token works, and owns the watch by its canonical 
     assert.ok(list.body.watches.some((w) => w.id === created.body.watch.id), 'the watch is listed for that session');
     assert.strictEqual((await api('GET', `/api/v1/watches/${created.body.watch.id}`, { token: userToken(other, { aud: 'openvibe.network' }) })).status, 404, 'another person cannot read it');
     assert.strictEqual((await api('GET', '/api/v1/watches', { token: userToken(who, { aud: 'openvibe.deals' }) })).status, 401, 'a token for another service is still refused');
+    const bare = userToken(who, { aud: 'openvibe.network', extra: { sub: 4242, subject_id: null } });
+    const refused = await api('GET', '/api/v1/watches', { token: bare });
+    assert.strictEqual(refused.status, 401, 'a session token with no usr_ subject owns nothing');
 });
 
 t('create, read, list: the released contracts on both sides, and the view is the contract', async () => {
