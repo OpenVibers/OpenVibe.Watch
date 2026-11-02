@@ -103,6 +103,13 @@ t('the API sample\'s body is one the API accepts', async () => {
     assert.strictEqual(r.status, 201, r.text);
 });
 
+t('the hero is one watch\'s own history, not the generic aura (MOTION-1)', async () => {
+    const page = await plain.get('/', { headers: { accept: 'text/html' } });
+    assert.match(page.text, /<div class="wt-scene" aria-hidden="true">/);
+    assert.match(page.text, /under \$1,250[\s\S]*?\$1,199[\s\S]*?Price dropped to \$1,199/);
+    assert.ok(!/sc-aura-glow/.test(page.text), 'no generic aura');
+});
+
 t('done', async () => { await search.close(); await svc.stop(); await plain.stop(); });
 
 t.run();

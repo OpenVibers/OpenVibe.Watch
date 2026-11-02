@@ -125,6 +125,22 @@ const QUIET_ACTION = [{ kind: 'event', event_type: 'watch.watch.triggered' }];
 const INT = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
 
 /** Same-site writes only: another site must not make a signed-in visitor act here. */
+/**
+ * The home's picture (MOTION-1, 2026-11-02: it drew the generic aura): one watch's own history. A price, its rule, the
+ * checks every two hours with what each one read, the check that crossed the line, and the alert it sent. Every part is
+ * something a watch keeps.
+ */
+function watchScene() {
+    const ic = (n) => require('openvibe-shared/kit').icon(n);
+    const row = (time, value, extra = '') => `<li class="wt-sc-check${extra ? ' is-hit' : ''}"><span class="wt-sc-dot"></span><time>${time}</time><b>${value}</b>${extra}</li>`;
+    return `<div class="wt-scene" aria-hidden="true">
+<div class="wt-sc-card"><div class="wt-sc-head"><b>Price: ThinkPad X1</b><span>${ic('clock')} every 2 h</span></div>
+<div class="wt-sc-rule">Tell me when it is <b>under $1,250</b></div>
+<ol class="wt-sc-checks">${row('09:00', '$1,349')}${row('11:00', '$1,349')}${row('13:00', '$1,199', '<em>↓ $150</em>')}</ol></div>
+<div class="wt-sc-alert">${ic('bell')}<span><b>Price dropped to $1,199</b><small>Told you at 13:00 · the check is kept</small></span></div>
+</div>`;
+}
+
 function sameOrigin(req, baseUrl) {
     const site = String(req.get('sec-fetch-site') || '');
     if (site) return site === 'same-origin';
@@ -565,6 +581,7 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
                 ? [{ label: 'New watch', href: '/watches/new?template=page', primary: true }, { label: 'Your watches', href: '/watches' }]
                 : [{ label: 'Sign in to start', href: '/auth/login?next=%2Fwatches%2Fnew%3Ftemplate%3Dpage', primary: true }, { label: 'How it checks', href: '#h-check' }],
             note: yours || 'Free while it is in alpha. Reading this page needs no account.',
+            aside: { html: watchScene() },
         });
         const ICONS = { page: 'ov:docs', price: 'ov:deals', feed: 'ov:news', json: 'ov:json', event: 'ov:live', webhook: 'ov:code', lan: 'ov:plug' };
         const [channelRows, plans, postRows] = await Promise.all([reads.channels(), reads.plans(), reads.posts()]);
