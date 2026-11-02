@@ -36,12 +36,26 @@ function pickBlock({ key, label, head = '', panes, bodyClass = '' }) {
 
 
 /**
+ * What a fold holds, counted, for its title row (the owner, 2026-10-31: a fold that shortens a page shows its count):
+ * "6 questions", "12 items", "latest 5" for the shipped list, or nothing when there is nothing to count. Replaces the
+ * old "tap to open".
+ */
+function foldMeta(body, cls = '') {
+    const s = typeof body === 'string' ? body : String((body && (body.s || body.html || body.value)) || body || '');
+    const n = (re) => (s.match(re) || []).length;
+    const shipped = /data-ov-shipped="list"[^>]*?data-limit="(\d+)"|data-limit="(\d+)"[^>]*?data-ov-shipped="list"/.exec(s);
+    const q = n(/<details[\s>]/g), li = n(/<li[\s>]/g), a = n(/<a\s/g);
+    const text = shipped ? `latest ${shipped[1] || shipped[2]}` : q > 1 ? `${q} questions` : li > 1 ? `${li} items` : a > 1 ? `${a} links` : '';
+    return text ? `<span${cls ? ` class="${cls}"` : ''}>${text}</span>` : '';
+}
+
+/**
  * A fold. The head is the heading the block had; the html is what it holds.
  *
  *   foldBlock({ id, head, html })
  */
 function foldBlock({ id, head, html }) {
-    return `<details class="hm-fold hm-fold-block" id="${esc(id)}" open><summary>${head}<span>tap to open</span></summary>${html}</details>${foldScript(id)}`;
+    return `<details class="hm-fold hm-fold-block" id="${esc(id)}" open><summary>${head}${foldMeta(html)}</summary>${html}</details>${foldScript(id)}`;
 }
 
 /** The script a fold carries: closed on a phone unless the reader opened it before, and it remembers that. */
@@ -71,8 +85,8 @@ function foldSection(html, needle, id) {
     // The lede under the heading goes with it: the fold's heading says enough on a phone.
     const lede = /<p class="sc-lede"[^>]*>[\s\S]*?<\/p>/.exec(inner);
     if (lede) inner = inner.slice(0, lede.index) + inner.slice(lede.index + lede[0].length);
-    const fold = `<details class="hm-fold hm-fold-block" id="${esc(id)}" open><summary>${head}<span>tap to open</span></summary>${inner.trim()}</details>${foldScript(id)}`;
+    const fold = `<details class="hm-fold hm-fold-block" id="${esc(id)}" open><summary>${head}${foldMeta(inner.trim())}</summary>${inner.trim()}</details>${foldScript(id)}`;
     return html.slice(0, start) + openTag + fold + html.slice(close);
 }
 
-module.exports = { pickBlock, foldBlock, foldScript, foldSection };
+module.exports = { pickBlock, foldBlock, foldMeta, foldScript, foldSection };
