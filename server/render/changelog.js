@@ -25,7 +25,9 @@ const inline = (s) => raw(String(s)
 function renderMarkdown(md) {
     const out = [];
     let list = null;
-    const flush = () => { if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; } };
+    // The list is markup already (each item escaped by html``): raw, or the page escapes it a second time (/updates showed
+    // "&lt;ul&gt;&lt;li&gt;… watch&amp;#39;s", 2026-11-02).
+    const flush = () => { if (list) { out.push(raw(`<ul>${list.join('')}</ul>`)); list = null; } };
     for (const line of String(md).split(/\r?\n/)) {
         const t = line.trim();
         if (!t) { flush(); continue; }
