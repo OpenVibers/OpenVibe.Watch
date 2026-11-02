@@ -101,3 +101,25 @@
 :where(.sc-sec, .cm-sec, .hm-sec, .section) > .hm-fold-block { margin: 0; }
 /* The fold holds the questions, so its list gets the room the card gives it. */
 .hm-fold-block .hm-faq { margin: 0; padding: 0 16px 16px; }
+
+/* ── The home's picture: one watch's history (MOTION-1, 2026-11-02) ──────────────────────────────────────────────── */
+.wt-scene { position: relative; width: min(100%, 360px); margin: 0 auto; padding-bottom: 6px; }
+.wt-scene svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wt-sc-card { border-radius: 16px; border: 1px solid var(--border, rgba(255, 255, 255, .1)); background: var(--bg-card, var(--bg-secondary, #141c2a)); padding: 14px 16px; display: grid; gap: 10px; box-shadow: 0 12px 30px rgba(0, 0, 0, .22); }
+.wt-sc-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.wt-sc-head b { font-size: 14.5px; color: var(--text-primary, #e8ecf3); }
+.wt-sc-head span { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-muted, #93a0b4); white-space: nowrap; }
+.wt-sc-rule { font-size: 13px; color: var(--text-secondary, #b6c0d2); padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent); }
+.wt-sc-rule b { color: var(--text-primary, #e8ecf3); }
+.wt-sc-checks { list-style: none; margin: 0; padding: 0 0 0 6px; display: grid; gap: 2px; border-left: 2px solid var(--border, rgba(255, 255, 255, .12)); }
+.wt-sc-check { position: relative; display: flex; align-items: baseline; gap: 12px; padding: 7px 0 7px 14px; font-size: 13.5px; color: var(--text-secondary, #b6c0d2); }
+.wt-sc-dot { position: absolute; left: -7px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: var(--bg-secondary, #0f1522); border: 2px solid var(--border, rgba(255, 255, 255, .25)); }
+.wt-sc-check time { font-variant-numeric: tabular-nums; color: var(--text-muted, #93a0b4); width: 3.2em; }
+.wt-sc-check b { font-variant-numeric: tabular-nums; color: var(--text-primary, #e8ecf3); font-weight: 600; }
+.wt-sc-check em { margin-left: auto; font-style: normal; font-weight: 700; font-size: 12.5px; color: var(--success-text, var(--success, #22c55e)); }
+.wt-sc-check.is-hit .wt-sc-dot { background: var(--accent, #3b82f6); border-color: var(--accent, #3b82f6); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, #3b82f6) 25%, transparent); }
+.wt-sc-alert { position: relative; margin: -10px 0 0 auto; width: 86%; display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 45%, var(--border, rgba(255, 255, 255, .1))); background: var(--bg-card, var(--bg-secondary, #141c2a)); box-shadow: 0 10px 26px rgba(0, 0, 0, .25); }
+.wt-sc-alert > svg { color: var(--accent, #3b82f6); width: 20px; height: 20px; }
+.wt-sc-alert span { display: grid; gap: 2px; min-width: 0; }
+.wt-sc-alert b { font-size: 13.5px; color: var(--text-primary, #e8ecf3); }
+.wt-sc-alert small { font-size: 12px; color: var(--text-muted, #93a0b4); }
