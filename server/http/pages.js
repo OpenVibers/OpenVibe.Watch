@@ -100,6 +100,9 @@ const TEMPLATES = {
     },
 };
 const TEMPLATE_NAMES = Object.keys(TEMPLATES);
+/** The templates whose source is polled: the site can run one quiet test check before arming these. */
+const POLLING_TEMPLATES = new Set(['page', 'price', 'feed', 'json', 'lan']);
+const CREATE_SUBMIT = (template) => (POLLING_TEMPLATES.has(template) ? 'Create and test this watch' : 'Create this watch');
 // The public events the event template offers (Contracts: each is `public`, so any watch may read it): which payload
 // field narrows it, and which field is new on every occurrence (so `changed` fires once per occurrence).
 const EVENT_CHOICES = [
@@ -497,16 +500,18 @@ ${extractionBlock}
 ${conditionBlock}
 <fieldset><legend>${pushed ? 'How to tell you' : 'How often, and how to tell you'}</legend>
 ${pushed ? html`<p class="muted small">${template === 'event' ? 'Checked each time the event arrives (at most 60 an hour), never on a cadence.' : 'Checked each time a signed delivery arrives (at most 60 an hour), never on a cadence.'}</p>` : field('Cadence', cadence, { name: 'cadence', error: errors.cadence, hint: 'Watch never checks more often than this, and can wait longer when the site asks it to.' })}
-${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'When the condition fires you get one notification on OpenVibe (your notifications on any OpenVibe site), with the value and a link here.' })}
-${checkbox('Run one of my agents on OpenVibe.Actor', { name: 'agent_on', checked: fields.agent_on === 'on', hint: 'When the condition fires, Watch gives your agent the value and a link to this watch.' })}
+${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify === 'on', hint: 'When the condition fires you get one notification on OpenVibe (your notifications on any OpenVibe site), with the before and after values, the source address, the time it was fetched and a link here.' })}
+${checkbox('Run one of my agents on OpenVibe.Actor', { name: 'agent_on', checked: fields.agent_on === 'on', hint: 'When the condition fires, Watch gives your agent the before and after values, the source address, the time it was fetched and a link to this watch.' })}
 ${field('Agent id', html`<input type="text" id="${idOf('agent_id')}" name="agent_id" value="${fields.agent_id}" maxlength="30" placeholder="agt_…">`, { name: 'agent_id', error: errors.agent_id, hint: 'Find the id on your agent’s OpenVibe.Actor page. Required when running an agent.' })}
 ${field('Note for the agent (optional)', html`<textarea id="${idOf('agent_note')}" name="agent_note" maxlength="2000" rows="3">${fields.agent_note}</textarea>`, { name: 'agent_note', error: errors.agent_note })}
-${checkbox('Start a coding task on my own machine (OpenVibe.Codes)', { name: 'codes_on', checked: fields.codes_on === 'on', hint: 'When the condition fires, OpenVibe.Codes runs the task on your machine (add it on openvibe.bot/machines and start one task on openvibe.codes/run first), with the value and a link to this watch. You get the summary and the patch on its page.' })}
+${checkbox('Start a coding task on my own machine (OpenVibe.Codes)', { name: 'codes_on', checked: fields.codes_on === 'on', hint: 'When the condition fires, OpenVibe.Codes runs the task on your machine (add it on openvibe.bot/machines and start one task on openvibe.codes/run first), with the before and after values, the source address, the time it was fetched and a link to this watch. You get the summary and the patch on its page.' })}
 ${field('Repository', html`<input type="url" id="${idOf('codes_repo')}" name="codes_repo" value="${fields.codes_repo}" maxlength="300" placeholder="https://github.com/you/project">`, { name: 'codes_repo', error: errors.codes_repo })}
 ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="codes_brief" maxlength="6000" rows="3" placeholder="The dependency in the value changed: update it and run the tests.">${fields.codes_brief}</textarea>`, { name: 'codes_brief', error: errors.codes_brief })}
 </fieldset>
 <p class="form-actions"><button class="btn primary" type="submit">${submit}</button> <a href="/watches">Cancel</a></p>
-<p class="muted small">Notifications, Actor agents and coding tasks are delivered when the watch fires.</p>
+<p class="muted small">${POLLING_TEMPLATES.has(template)
+            ? 'Saving reads it once, quietly: the next page shows what the check found, and nothing is sent until you arm it.'
+            : 'Saving arms it at once: it waits for its event or signed delivery, and nothing is polled.'} Notifications, Actor agents and coding tasks are delivered when the watch fires.</p>
 </form>`;
     }
 
@@ -533,7 +538,7 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
         ['What can I watch?', 'A web page or one part of it, a price or any number on a page, an RSS or Atom feed, a value in a JSON API, a webhook that something calls, an OpenVibe event such as a channel going live, or a device on your own network.'],
         ['How often does it check?', 'On the cadence you pick: every 15 minutes, hourly, every 6 hours or daily. Events and webhooks are not polled at all: the watch wakes the moment they arrive.'],
         ['Will it hammer the sites I watch?', 'No. It asks whether anything changed before downloading again, never sends two requests to one site at once, keeps a minimum gap per site, and waits when a site asks it to.'],
-        ['How am I told?', 'A notification on your OpenVibe account by default. A watch can also call your webhook, hand a task to your OpenVibe.Actor agent or start a coding task on your own machine.'],
+        ['How am I told?', 'A notification on your OpenVibe account by default, with the before and after values, the source address and the time it was fetched. A watch can also call your webhook, hand a task to your OpenVibe.Actor agent or start a coding task on your own machine.'],
         ['Does it guess when a check fails?', 'Never. A failed check is recorded as failed with its reason, and a value that is missing stays missing. Every check is kept with the time and what it found.'],
         ['What does it cost?', 'Nothing while it is in alpha. Reading this page needs no account; making a watch needs your OpenVibe account.'],
         ['Can my app make watches?', 'Yes. The same API the site uses creates, pauses and checks watches and reads every observation, with the watch.* capabilities granted on OpenVibe.Services.'],
@@ -614,6 +619,8 @@ ${raw(S.pickBlock({ key: 'ready', label: 'Ready-made watches', panes: readyPanes
 <li><strong>Polite per-site spacing.</strong> Two requests to one host never leave at once, and no two requests to a host are closer than the host’s minimum interval — whatever the watch says.</li>
 <li><strong>Never faster than your cadence.</strong> A watch is due on the cadence you pick; a failing site is checked less often (backoff), and a site that asks Watch to wait is waited for (<code>Retry-After</code>).</li>
 <li><strong>Every check is recorded.</strong> Read, no change, changed, condition met, a site error, a timeout, an unreadable answer, a wait, a skipped kind — the state is kept with the value, the time and a capped snapshot, and the watch is re-armed on every path.</li>
+<li><strong>A quiet test before arming.</strong> A new polling watch is saved paused, read once, and shows what that read found. Nothing is sent and no cadence starts until you arm it.</li>
+<li><strong>Every alert carries its evidence.</strong> The value before and after, the source address, the time it was fetched, and a link to the watch.</li>
 </ul>
 <p><a href="/how-it-works">The full picture, in plain words</a>.</p></div></details></section>
 <section class="sc-sec" id="api" aria-labelledby="h-api"><details class="hm-fold"><summary><h2 id="h-api">Make watches from your own code</h2><span>the API, with curl</span></summary>${raw(showcase.code({
@@ -648,11 +655,12 @@ ${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-you
         const withLatest = await Promise.all(rows.map(async (row) => ({ row, latest: await observations.latest(row.id) })));
         const watchRows = withLatest.map(({ row, latest }) => {
             const v = registry.view(row);
+            const notArmed = v.status === 'paused' && row.armed_at == null;
             return [
                 html`<a href="/watches/${row.id}">${v.name}</a>`,
                 html`<code>${W.host(v.source.url)}</code>`,
-                W.conditionWords(v.condition),
-                html`${badge(W.statusWords(v.status), W.statusKind(v.status))}`,
+                W.conditionSentence(v),
+                html`${badge(notArmed ? 'Not armed yet' : W.statusWords(v.status), notArmed ? 'warn' : W.statusKind(v.status))}`,
                 v.health.last_state
                     ? html`${W.stateWords(v.health.last_state)} <span class="muted small">${v.health.last_check_at ? time(v.health.last_check_at) : ''}</span>`
                     : html`<span class="muted">not checked yet</span>`,
@@ -704,7 +712,7 @@ ${older ? html`<a class="btn" href="${older}">Older watches</a>` : html`<span cl
             body: html`<h1>New watch</h1>
 <p class="muted">${TEMPLATES[template].title}.</p>
 ${templateChooser(template)}
-${watchForm({ template, fields: prefilled(template, req.query), errors: {}, action: '/watches/new', submit: 'Create this watch' })}`,
+${watchForm({ template, fields: prefilled(template, req.query), errors: {}, action: '/watches/new', submit: CREATE_SUBMIT(template) })}`,
         });
     });
 
@@ -724,7 +732,19 @@ ${watchForm({ template, fields: prefilled(template, req.query), errors: {}, acti
         let errors = built.errors;
         if (!errors) {
             try {
-                const row = await registry.create(built.body, principalOf(req));
+                // A polling watch is created paused, checked once quietly, and armed by the person after
+                // they have seen what the check found. Nothing is notified and no cadence starts yet.
+                const polled = POLLING_TEMPLATES.has(template);
+                const body = polled ? { ...built.body, status: 'paused' } : built.body;
+                const row = await registry.create(body, principalOf(req));
+                if (polled) {
+                    try {
+                        await check.run(row.id, { trigger: 'manual', quiet: true });
+                    } catch (err) {
+                        log.error(`[watch] ${row.id}: the quiet test check failed: ${err.stack || err}`);
+                    }
+                    return res.redirect(303, `/watches/${row.id}?tested=1`);
+                }
                 if (template === 'webhook' && ctx.webhookSources) return secretPage(req, res, registry.view(row), await ctx.webhookSources.issue(row.id), 201);
                 return res.redirect(303, `/watches/${row.id}`);
             } catch (err) {
@@ -739,7 +759,7 @@ ${watchForm({ template, fields: prefilled(template, req.query), errors: {}, acti
 ${errors.form ? notice(errors.form, 'warn') : ''}
 <p class="muted">Fix the ${Object.keys(errors).length === 1 ? 'entry' : 'entries'} marked below and create it again.</p>
 ${templateChooser(template)}
-${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create this watch' })}`,
+${watchForm({ template, fields, errors, action: '/watches/new', submit: CREATE_SUBMIT(template) })}`,
         }, 422);
     });
 
@@ -757,6 +777,28 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create 
 
     const obsLimit = (q) => Math.min(Math.max(INT(q, 20), 1), 100);
     const ridBefore = (q) => (/^\d{1,18}$/.test(String(q || '')) ? Number(q) : null);
+
+    /** What a quiet test check found, in words: the value, its source and the time read. Missing parts are left out. */
+    function testCheckNotice(runRow, observation, view) {
+        const run = check.runView(runRow);
+        const from = view.source.url || (view.source.probe && view.source.probe.target) || null;
+        const at = observation ? time(new Date(Number(observation.observed_at)).toISOString()) : null;
+        const read = run.observations && observation
+            ? html` It read ${W.valueWords(observation.value, 160)}${from ? html` from <code>${from}</code>` : ''}${at ? html` at ${at}` : ''}.`
+            : '';
+        const why = !run.observations && run.detail ? html` ${String(run.detail).replace(/\.?$/, '.')}` : '';
+        const holds = observation && Boolean(Number(observation.condition_met));
+        return notice(html`<strong>Test check:</strong> ${badge(W.stateWords(run.state, run), W.stateKind(run.state))}${read || why ? html` —` : ''}${read}${why} Nothing was sent.${holds ? html` This value already satisfies the condition.` : ''}`,
+            W.stateKind(run.state) === 'bad' ? 'warn' : 'info');
+    }
+
+    /** The evidence an alert carried, from the request stored for its action (notification keeps it in rich_content). */
+    function carriedEvidence(action) {
+        let request = action.request || {};
+        if (typeof request === 'string') { try { request = JSON.parse(request); } catch { request = {}; } }
+        if (action.kind === 'notification') return request.rich_content && request.rich_content.evidence;
+        return request.evidence || (request.body && request.body.evidence) || null;
+    }
 
     r.get('/watches/:id', async (req, res) => {
         if (!signedIn(req)) return res.redirect(303, `/auth/login?next=${encodeURIComponent(req.originalUrl)}`);
@@ -792,19 +834,31 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: 'Create 
         });
 
         const ACT_WORDS = { queued: ['waiting to send', 'info'], sent: ['sent', 'ok'], skipped: ['not sent', 'warn'], failed: ['failed', 'bad'], unavailable: ['not available yet', 'warn'] };
-        const actRows = acts.map((a) => [
-            time(a.created_at),
-            a.kind === 'notification' ? 'Notification' : html`<code>${a.kind}</code>`,
-            badge((ACT_WORDS[a.state] || [a.state])[0], (ACT_WORDS[a.state] || [null, 'info'])[1]),
-            a.error ? html`<span class="muted small">${a.error}</span>` : (a.attempts > 1 ? html`<span class="muted small">${a.attempts} attempts</span>` : ''),
-        ]);
+        const actRows = acts.map((a) => {
+            const notes = [];
+            if (a.error) notes.push(html`<span class="muted small">${a.error}</span>`);
+            if (a.attempts > 1) notes.push(html`<span class="muted small">${a.attempts} attempts</span>`);
+            const evidence = W.evidenceWords(carriedEvidence(a));
+            if (evidence) notes.push(evidence);
+            return [
+                time(a.created_at),
+                a.kind === 'notification' ? 'Notification' : html`<code>${a.kind}</code>`,
+                badge((ACT_WORDS[a.state] || [a.state])[0], (ACT_WORDS[a.state] || [null, 'info'])[1]),
+                notes.length ? html`${notes.map((n, i) => (i ? html`<br>${n}` : n))}` : '',
+            ];
+        });
 
         const ran = String(req.query.ran || '');
+        const unarmed = v.status === 'paused' && row.armed_at == null;
+        // While a watch is unarmed its only runs are the quiet test checks the site ran, so the latest
+        // run is the test whose result the person has not armed past yet.
+        const testRun = unarmed && runs.length ? runs[0] : null;
+        const testObs = testRun ? obs.find((o) => o.check_run_id === testRun.id) || null : null;
         const actionForms = html`<div class="actions">
 ${v.status === 'active'
                     ? html`<form class="inline" method="post" action="/watches/${v.id}/pause"><button class="btn" type="submit">Pause</button></form>`
-                    : html`<form class="inline" method="post" action="/watches/${v.id}/resume"><button class="btn" type="submit">Resume</button></form>`}
-<form class="inline" method="post" action="/watches/${v.id}/check"><button class="btn" type="submit">Check now</button></form>
+                    : html`<form class="inline" method="post" action="/watches/${v.id}/resume"><button class="${unarmed ? 'btn primary' : 'btn'}" type="submit">${unarmed ? 'Arm this watch' : 'Resume'}</button></form>`}
+${unarmed ? '' : html`<form class="inline" method="post" action="/watches/${v.id}/check"><button class="btn" type="submit">Check now</button></form>`}
 <a class="btn" href="/watches/${v.id}/edit">Edit</a>
 <form class="inline" method="post" action="/watches/${v.id}/delete"><button class="btn danger" type="submit">Delete</button></form>
 </div>`;
@@ -817,8 +871,9 @@ ${v.status === 'active'
             body: html`<h1>${v.name}</h1>
 <p class="in-words">${W.inWords(v)}</p>
 ${ran ? notice(html`The check ran: <strong>${W.stateWords(ran)}</strong>.`, ran === 'changed' || ran === 'condition_met' ? 'ok' : 'info') : ''}
+${testRun ? testCheckNotice(testRun, testObs, v) : ''}
 <dl class="facts">
-<dt>Status</dt><dd>${badge(W.statusWords(v.status), W.statusKind(v.status))}</dd>
+<dt>Status</dt><dd>${badge(unarmed ? 'Not armed yet' : W.statusWords(v.status), unarmed ? 'warn' : W.statusKind(v.status))}</dd>
 ${v.source.kind === 'webhook'
                 ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">The secret was shown once, when the watch was made. A new one replaces it at once.</span></dd>`
                 : html`<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>`}
@@ -830,6 +885,7 @@ ${v.health.consecutive_failures ? html`<dt>Failing</dt><dd>${v.health.consecutiv
 <dt>Last value</dt><dd>${latest ? W.valueWords(latest.value, 200) : html`<span class="muted">nothing recorded yet</span>`}</dd>
 </dl>
 ${actionForms}
+${unarmed ? html`<p class="muted small">This watch has not started its cadence. Arm it to begin checking; the test check is not repeated by itself.</p>` : ''}
 <section aria-labelledby="h-obs"><h2 id="h-obs">Observation history</h2>
 ${table(['When', 'Value', 'Changed', 'Condition'], obsRows, { empty: 'No observations yet. Watch records one when a check reads a value.' })}
 <nav class="pager">${nextObs ? html`<a class="btn" href="${nextObs}">Older observations</a>` : html`<span class="muted">That is every observation kept.</span>`}</nav></section>
@@ -1039,12 +1095,17 @@ ${table(['State', 'In plain words'], [
                     ['skipped', 'This kind of check is not run yet (or an AI reading is not supported yet). Nothing was fetched.'],
                     ['disabled', 'The watch is paused, disabled or failing, so it was not checked.'],
                 ].map(([state, words]) => [html`<code>${state}</code>`, words]))}
+<h2>Before it arms</h2>
+<ul>
+<li><strong>The quiet test.</strong> A polling watch made on the site is saved paused and read once before it checks on a cadence. The watch page shows the value that read found and what state it recorded; nothing is sent, and no action is queued, until you arm it.</li>
+<li><strong>The evidence in every alert.</strong> A notification, a webhook body and an Actor task carry the value before and after, the source address and the time the value was fetched. A part the source did not state is left out, never guessed.</li>
+</ul>
 <h2>What is honest about it</h2>
 <ul>
 <li>A value the source did not state is <code>null</code>; Watch never invents one, and an absent value stays absent.</li>
 <li>A failed check is a recorded state, never a silent skip; a failed check records no observation.</li>
 <li>A site that is unavailable is retried with backoff, not hammered.</li>
-<li>The kinds that arrive later (event, webhook, Run, Node) and an AI reading are not offered in the form, because Watch will not pretend to check what it cannot.</li>
+<li>Run and an AI reading are not offered in the form, because Watch will not pretend to check what it cannot. Event, webhook and Node watches are.</li>
 </ul>
 <p><a href="/watches/new?template=page">Start a watch</a> · <a href="/">Back home</a></p>`,
     }));

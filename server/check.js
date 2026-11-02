@@ -186,7 +186,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
 
     // ── One check ────────────────────────────────────────────────────────────────────────────
 
-    async function runOnce(row, trigger, input = null) {
+    async function runOnce(row, trigger, input = null, { quiet = false } = {}) {
         const watch = registry.fromRow(row);
         const startedAt = now();
         const carrier = watch.source && watch.source.kind ? watch.source.kind : null;
@@ -197,12 +197,13 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                 ...baseRun(watch, trigger, carrier, startedAt),
                 state, error_code, detail, finished_at: now(),
             };
-            const events = await eventsFor({ watch, owner: row.owner_sub, run, failures: failuresBefore + 1 });
+            const events = quiet ? [] : await eventsFor({ watch, owner: row.owner_sub, run, failures: failuresBefore + 1 });
             return await settle({ watch, run, failures: failuresBefore + 1, events });
         };
 
-        // A watch that is not active is never fetched, and says so.
-        if (row.status !== 'active') {
+        // A watch that is not active is never fetched, and says so. The one exception is the site's
+        // quiet test of a just-created paused watch: it runs once with `quiet` and sends nothing.
+        if (row.status !== 'active' && !(quiet && row.status === 'paused')) {
             return { disabled: true, ...(await skip('disabled', `watch_${row.status}`, `the watch is ${row.status}`)) };
         }
 
@@ -249,7 +250,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                 bytes: out.bytes ?? null, raw_body_hash: out.raw_body_hash ?? null, finished_at: finishedAt,
             };
             const failures = failuresBefore + 1;
-            const events = await eventsFor({ watch, owner: row.owner_sub, run, failures });
+            const events = quiet ? [] : await eventsFor({ watch, owner: row.owner_sub, run, failures });
             const result = await settle({ watch, run, failures, events, endpoint, notBefore: out.notBefore || 0 });
             return { ...result, rateLimitedUntil: out.notBefore || null };
         }
@@ -285,7 +286,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                     finished_at: finishedAt,
                 };
                 const failures = failuresBefore + 1;
-                const events = await eventsFor({ watch, owner: row.owner_sub, run, failures });
+                const events = quiet ? [] : await eventsFor({ watch, owner: row.owner_sub, run, failures });
                 return await settle({ watch, run, failures, events });
             }
         } else {
@@ -297,7 +298,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                     detail: out.detail ? String(out.detail).slice(0, 500) : null,
                     bytes: out.bytes ?? null, raw_body_hash: out.raw_body_hash ?? null, finished_at: finishedAt,
                 };
-                const events = await eventsFor({ watch, owner: row.owner_sub, run, failures: 0 });
+                const events = quiet ? [] : await eventsFor({ watch, owner: row.owner_sub, run, failures: 0 });
                 return await settle({ watch, run, failures: 0, successAt: finishedAt, events, endpoint });
             }
             value = held.value;
@@ -323,7 +324,8 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         // with its finish time; the firing run's start is always earlier, so the last firing is compared by when it
         // finished (comparing its start made every check while the condition held fire again).
         const repeat = verdict.met && !verdict.changed && lastFired != null && verdict.since != null && Number(lastFired.finished_at) >= verdict.since;
-        const met = verdict.met && !repeat;
+        // A quiet test records the value and what it found, but it fires nothing and queues no action.
+        const met = !quiet && verdict.met && !repeat;
         if (verdict.error && !patternError) patternError = verdict.error;
 
         const retentionDays = watch.retention && Number.isInteger(watch.retention.observations_days)
@@ -359,27 +361,31 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
             previousValue = beforeLatest ? beforeLatest.value : null;
         }
 
-        const events = await eventsFor({
+        const events = quiet ? [] : await eventsFor({
             watch, owner: row.owner_sub, observation, value, met, run,
             firedOn, firedAt: finishedAt, previousValue, failures: 0,
         });
         const fired = met ? { owner: row.owner_sub, value, previousValue, observedAt: firedOn ? Number(firedOn.observed_at) : finishedAt } : null;
         const result = await settle({ watch, run, failures: 0, successAt: finishedAt, events, observation, endpoint, fired });
         return {
-            ...result, met, value, verdict: { ...verdict, met, repeat },
+            ...result, met, holds: verdict.met, quiet, value, verdict: { ...verdict, met, repeat },
             observation: observation ? observations.view(observation) : null,
         };
     }
 
     /**
-     * run(id, { trigger, event }) →
+     * run(id, { trigger, input, quiet }) →
      *   null                                  no such watch
      *   { busy: true }                        a check of this watch is already in flight
      *   { disabled: true }                    the watch is paused/disabled/failed; recorded, not fetched
      *   { unavailable: { code, detail } }     the carrier (or extraction) is a later step; nothing fetched
-     *   { run, observation, met, value }      the check ran
+     *   { run, observation, met, holds, value } the check ran
+     *
+     * `quiet: true` is the site's test check of a watch it created paused: it may run once, it records
+     * the run and the observation like any check, but it emits no event, fires no condition and queues
+     * no action. It is never the API's or the scheduler's trigger.
      */
-    async function run(id, { trigger = 'schedule', input = null } = {}) {
+    async function run(id, { trigger = 'schedule', input = null, quiet = false } = {}) {
         const key = String(id);
         // Claimed before the first await, so two callers racing on one watch cannot both proceed.
         if (inflight.has(key)) return { busy: true };
@@ -387,7 +393,7 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         try {
             const row = await registry.get(key);
             if (!row) return null;
-            return await runOnce(row, trigger, input);
+            return await runOnce(row, trigger, input, { quiet });
         } finally {
             inflight.delete(key);
         }

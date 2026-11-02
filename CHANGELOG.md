@@ -3,6 +3,21 @@
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 
+## 2026-11-01 — the condition in words, a quiet test before arming, and the evidence in every alert
+
+- The watch list and each watch page say the watch's structured condition in one sentence — what it reads, where,
+  and what makes it fire — instead of the condition operator alone (`server/render/watch.js`, `server/http/pages.js`).
+- A polling watch made on the site is saved paused and read once by a quiet test check before it arms. The watch page
+  shows the value that check found (or the state it recorded and why, when it found none), nothing is notified and no
+  action is queued, and the person arms it when ready. The first arm is stored in `watches.armed_at`
+  (migration `0014_armed_at.sql`, `server/check.js`, `server/http/pages.js`).
+- Every alert now carries its evidence: a notification's message and `rich_content`, a webhook body, an Actor task's
+  context and a run-job's firing argument state the value before and after, the source address and the time the value
+  was fetched. A part the watch did not store is left out (`server/actions.js`). The watch page's alert history shows
+  the same evidence (`server/http/pages.js`).
+- Tests: `test/site.test.js` (the quiet test, the failed test, arming, the condition in words, the arm badge),
+  `test/actions.test.js` (the notification and webhook evidence, the omitted line, the page history).
+
 ## 2026-10-31 — a person's Network session token on the API
 
 - The watch API accepts a signed-in person's Network session token (`aud: openvibe.network`) as a Bearer, the same

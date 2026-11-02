@@ -205,9 +205,9 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         get: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
         countOwned: db.prepare('SELECT COUNT(*) AS n FROM watches WHERE owner_sub = ? AND deleted_at IS NULL'),
         insert: db.prepare(`INSERT INTO watches (id, project_id, project_env, owner_sub, name, status, source, cadence, extraction, comparison, condition,
-            action, budget, retention, labels, next_due_at, not_before, created_at, updated_at, updated_by)
+            action, budget, retention, labels, next_due_at, not_before, created_at, updated_at, updated_by, armed_at)
             VALUES (@id, @project_id, @project_env, @owner_sub, @name, @status, @source, @cadence, @extraction, @comparison, @condition,
-            @action, @budget, @retention, @labels, @next_due_at, 0, @created_at, @updated_at, @updated_by)`),
+            @action, @budget, @retention, @labels, @next_due_at, 0, @created_at, @updated_at, @updated_by, @armed_at)`),
     };
 
     /** Every column a patch may write, and nothing else. */
@@ -369,6 +369,9 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             created_at: t,
             updated_at: t,
             updated_by: owner,
+            // A watch created paused by the site has not been armed: its quiet test check is the only read
+            // and the watch page offers to arm it. An active watch (the API's default) is armed at creation.
+            armed_at: rec.status === 'active' ? t : null,
         };
         // The row and its event commit together: an event exists exactly when its effect does.
         await db.tx(async () => {
@@ -413,6 +416,11 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         const rec = { ...current, ...changes };
         args.next_due_at = rec.status === 'active' ? arm(rec, args.updated_at) : 0;
         sets.push('next_due_at = @next_due_at');
+        // The first resume is the arm: a watch the site tested is paused with no armed_at until now.
+        if (rec.status === 'active' && row.armed_at == null) {
+            args.armed_at = args.updated_at;
+            sets.push('armed_at = @armed_at');
+        }
         sets.push('updated_at = @updated_at', 'updated_by = @updated_by');
         const type = changes.status === 'paused' ? 'watch.watch.paused' : 'watch.watch.updated';
         const touched = Object.keys(changes).filter((k) => k !== 'labels');

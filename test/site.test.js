@@ -23,7 +23,12 @@ const agentId = 'agt_01JAB2C3D4E5F6G7H8J9K0MNPQ';
 
 t('boot', async () => {
     web = await site({ '/price': () => ({ body: '<html><body><span class="price">19.99</span></body></html>' }) });
-    svc = await boot();
+    // The quiet test runs on create, so an example.org address must fail fast and never reach the internet.
+    svc = await boot({
+        lookupImpl: (hostname, _options, callback) => (hostname === '127.0.0.1'
+            ? callback(null, [{ address: '127.0.0.1', family: 4 }])
+            : callback(Object.assign(new Error(`test: ${hostname} is not fetched`), { code: 'ENOTFOUND' }))),
+    });
     me = svc.network.addUser('ada');
     other = svc.network.addUser('grace');
     ME = userToken(me.subject);
@@ -308,6 +313,67 @@ t('another person\'s watch is 404 on every page and form', async () => {
     assert.match(mine.text, /Mine/);
 });
 
+t('a polling watch is created paused, tested quietly once, and armed by the person', async () => {
+    const owner = svc.network.addUser('quiet-tester');
+    const cookie = await svc.signIn(owner);
+    const token = userToken(owner.subject);
+    const hitsBefore = web.hits('/price').length;
+    const made = await svc.get('/watches/new', {
+        cookie,
+        form: { template: 'price', name: 'Quiet price', url: `${web.origin}/price`, extraction: 'css', selector: '.price', op: 'lt', value: '20', cadence: '900', notify: 'on' },
+    });
+    assert.strictEqual(made.status, 303, made.text);
+    const id = indexOf(made);
+    assert.match(made.headers.get('location'), /\?tested=1$/, 'the created watch opens its test result');
+    assert.strictEqual(web.hits('/price').length, hitsBefore + 1, 'the test check fetched the page once, not twice');
+
+    const view = (await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token })).body.watch;
+    assert.strictEqual(view.status, 'paused', 'nothing checks on a cadence until the person arms it');
+    assert.ok(view.health.last_check_at, 'the test check is recorded');
+    assert.strictEqual(Number((await svc.db.prepare('SELECT COUNT(*) AS n FROM action_runs WHERE watch_id = ?').get(id)).n), 0, 'no action was queued by the test');
+    const run = await svc.db.prepare('SELECT * FROM check_runs WHERE watch_id = ? ORDER BY rid DESC LIMIT 1').get(id);
+    assert.deepStrictEqual([run.trigger, Number(run.observations), Number(run.triggers)], ['manual', 1, 0]);
+
+    const page = await svc.get(`/watches/${id}?tested=1`, { cookie });
+    assert.match(page.text, /Test check:/);
+    assert.match(page.text, /It read <code[^>]*>19\.99<\/code> from <code>[^<]*\/price<\/code> at <time/);
+    assert.match(page.text, /This value already satisfies the condition/);
+    assert.match(page.text, /Nothing was sent/);
+    assert.match(page.text, /Arm this watch/);
+    assert.match(page.text, /Not armed yet/, 'the watch says it has not started its cadence');
+    const plain = await svc.get(`/watches/${id}`, { cookie });
+    assert.match(plain.text, /Test check:/, 'the test result stays visible until the watch is armed');
+
+    // The watch list says the structured condition in words, not just the operator.
+    const list = await svc.get('/watches', { cookie });
+    assert.match(list.text, /the text of <code>\.price<\/code> on <b>127\.0\.0\.1:\d+<\/b> drops below <b>20<\/b>/);
+    assert.match(list.text, /Not armed yet/, 'the list says a tested watch has not started its cadence');
+
+    const armed = await svc.get(`/watches/${id}/resume`, { cookie, form: {} });
+    assert.strictEqual(armed.status, 303);
+    const armedView = (await request(svc.base, 'GET', `/api/v1/watches/${id}`, { token })).body.watch;
+    assert.strictEqual(armedView.status, 'active');
+    assert.ok(armedView.health.next_due_at, 'arming starts the cadence');
+    assert.ok((await svc.db.prepare('SELECT armed_at FROM watches WHERE id = ?').get(id)).armed_at, 'arming is recorded');
+});
+
+t('a quiet test that reads nothing shows the failure and no value line', async () => {
+    const owner = svc.network.addUser('quiet-failer');
+    const cookie = await svc.signIn(owner);
+    const made = await svc.get('/watches/new', {
+        cookie,
+        form: { template: 'page', name: 'Nowhere', url: 'https://nowhere.example/page', cadence: '3600' },
+    });
+    assert.strictEqual(made.status, 303, made.text);
+    const id = indexOf(made);
+    const page = await svc.get(`/watches/${id}?tested=1`, { cookie });
+    assert.match(page.text, /Test check:/);
+    assert.match(page.text, /The site answered an error/, 'the failure is stated, not hidden');
+    assert.doesNotMatch(page.text, /It read /, 'no value is claimed when the check read none');
+    assert.match(page.text, /Nothing was sent/);
+    assert.match(page.text, /Arm this watch/, 'the person may still arm it after seeing a failed test');
+});
+
 t('pause, resume, check now (against a stub site), and delete', async () => {
     const created = await create({ template: 'price', name: 'Stub price', url: `${web.origin}/price`, extraction: 'css', selector: '.price', op: 'lt', value: '20', cadence: '900' });
     const id = indexOf(created);
@@ -325,10 +391,11 @@ t('pause, resume, check now (against a stub site), and delete', async () => {
     const resumed = await svc.get(`/watches/${id}/resume`, { cookie: session, form: {} });
     assert.strictEqual(resumed.status, 303);
 
+    const hitsBefore = web.hits('/price').length;
     const ran = await svc.get(`/watches/${id}/check`, { cookie: session, form: {} });
     assert.strictEqual(ran.status, 303);
     assert.match(ran.headers.get('location'), /ran=condition_met/, '19.99 is below 20: the condition fired');
-    assert.strictEqual(web.hits('/price').length, 1);
+    assert.strictEqual(web.hits('/price').length, hitsBefore + 1, 'the manual check fetched the page once');
 
     const detail = await svc.get(`/watches/${id}`, { cookie: session });
     assert.match(detail.text, /19\.99/, 'the observation history shows the value');

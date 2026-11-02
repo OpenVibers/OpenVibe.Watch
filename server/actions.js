@@ -11,7 +11,8 @@
  *
  * Delivery, by kind:
  *   notification   the owner gets one OpenVibe notification through Network (openvibe-sdk/notifications, type
- *                  WATCH_TRIGGERED): the watch's name, the value and a link to the watch page. A person who switched
+ *                  WATCH_TRIGGERED): the watch's name, the value before and after, the source address, the time it was
+ *                  fetched and a link to the watch page. A person who switched
  *                  the category off is Network's decision and counts as sent; an owner Network does not know (a
  *                  deleted account) is `skipped`. A refusal retries after 1, 5 and 30 minutes, 2 and 6 hours, then
  *                  `failed`. Network keeps no idempotency record for a push, so a lost answer can repeat one: at least
@@ -19,7 +20,7 @@
  *   event          `watch.watch.triggered` is emitted with every firing, in the run's own commit, so that action is
  *                  `sent` as it is queued (it needs a person as owner, as the event does). Any other event type is not
  *                  declared in Watch's manifest: `unavailable`.
- *   webhook        a POST of the firing (webhookFor below) to the action's https URL through the SSRF guard
+ *   webhook        a POST of the firing (webhookFor below, with its evidence bundle) to the action's https URL through the SSRF guard
  *                  (server/net/post.js), signed with the key its secret_env names exactly as OpenVibe.Events signs a
  *                  delivery (openvibe-sdk/events signDeliveryHeaders: X-OpenVibe-Timestamp + X-OpenVibe-Signature-V2,
  *                  which a receiver checks with the SDK's verifier). X-OpenVibe-Delivery-Id (`<check run>.<action
@@ -29,7 +30,7 @@
  *                  set (32 characters or more), checked when it is queued and again at delivery: otherwise
  *                  `unavailable`.
  *   actor-task     a task for the owner on OpenVibe.Actor (server/actor.js): the action's brief, with the firing as
- *                  context, under the owner's own allowance (Watch names them in X-OV-Subject; Actor records Watch as
+ *                  context (before and after, source and fetch time), under the owner's own allowance (Watch names them in X-OV-Subject; Actor records Watch as
  *                  `via`), at most the action's budget_usd. The idempotency key `watch.<check run>.<action index>`
  *                  makes a retried delivery the same task. Created is `sent` (the task id is recorded). A request
  *                  Actor refuses as invalid (over the tier's budget, an unknown agent) is `failed` at once; anything
@@ -92,10 +93,28 @@ function valueText(v) {
     try { return JSON.stringify(v); } catch { return String(v); }
 }
 
+/**
+ * The evidence every alert carries: the value before and after, the source address it came from and
+ * when it was fetched. A part the watch does not store is null, and the line is left out of the words.
+ */
+function evidenceFor({ watch, value, previousValue, observedAt }) {
+    const source = (watch && watch.source) || {};
+    return {
+        before: previousValue === undefined ? null : previousValue,
+        after: value === undefined ? null : value,
+        source_url: source.url || (source.probe && source.probe.target) || null,
+        fetched_at: observedAt ? new Date(observedAt).toISOString() : null,
+    };
+}
+
 /** The notification a fired watch sends its owner (network.notification-push-request@1 fields). */
 function notificationFor({ config, watch, run, action, value, previousValue, observedAt }) {
     const now = valueText(value);
     const before = previousValue === undefined || previousValue === null ? null : valueText(previousValue);
+    const evidence = evidenceFor({ watch, value, previousValue, observedAt });
+    const facts = [before !== null && before !== now ? `${now} (was ${before})` : now];
+    if (evidence.source_url) facts.push(`from ${evidence.source_url}`);
+    if (evidence.fetched_at) facts.push(`fetched ${evidence.fetched_at}`);
     return {
         type: 'WATCH_TRIGGERED',
         service: 'watch',
@@ -103,13 +122,18 @@ function notificationFor({ config, watch, run, action, value, previousValue, obs
         priority: action.priority || 'normal',
         icon: '👁',
         title: clip(`“${watch.name}” fired`, TITLE_MAX),
-        message: clip(before !== null && before !== now ? `${now} (was ${before})` : now, MESSAGE_MAX),
+        message: clip(facts.join(' · '), MESSAGE_MAX),
         url: `${config.baseUrl}/watches/${encodeURIComponent(watch.id)}`,
-        rich_content: { watch_id: watch.id, check_run_id: run.id, observed_at: observedAt ? new Date(observedAt).toISOString() : null },
+        rich_content: {
+            watch_id: watch.id,
+            check_run_id: run.id,
+            observed_at: observedAt ? new Date(observedAt).toISOString() : null,
+            evidence,
+        },
     };
 }
 
-/** The body a webhook action POSTs: the firing, as the watch.watch.triggered event states it. */
+/** The body a webhook action POSTs: the firing, as the watch.watch.triggered event states it, with its evidence. */
 function webhookFor({ config, watch, run, value, previousValue, observedAt }) {
     return {
         type: TRIGGERED,
@@ -121,6 +145,7 @@ function webhookFor({ config, watch, run, value, previousValue, observedAt }) {
             value: value === undefined ? null : value,
             previous_value: previousValue === undefined ? null : previousValue,
         },
+        evidence: evidenceFor({ watch, value, previousValue, observedAt }),
     };
 }
 
@@ -142,11 +167,15 @@ function actorContextFor({ config, watch, value, previousValue, observedAt }, ma
     const now = valueText(value);
     const before = previousValue === undefined || previousValue === null ? null : valueText(previousValue);
     const when = observedAt ? new Date(observedAt).toISOString() : 'just now';
+    const evidence = evidenceFor({ watch, value, previousValue, observedAt });
     const first = `Context: your watch “${watch.name}” fired at ${when}.`;
     const last = `Watch: ${config.baseUrl}/watches/${encodeURIComponent(watch.id)}`;
     const valueLine = `Value: ${now}${before !== null && before !== now ? ` (was ${before})` : ''}.`;
-    const room = Math.max(0, maxLength - first.length - last.length - 2);
-    return [first, valueLine.length > room ? `${valueLine.slice(0, Math.max(0, room - 1))}…` : valueLine, last].join('\n').slice(0, maxLength);
+    const fromLine = evidence.source_url ? `Source: ${evidence.source_url}.` : null;
+    const fetchedLine = evidence.fetched_at ? `Fetched: ${evidence.fetched_at}.` : null;
+    const tail = [fromLine, fetchedLine, last].filter(Boolean);
+    const room = Math.max(0, maxLength - first.length - tail.join('\n').length - 2);
+    return [first, valueLine.length > room ? `${valueLine.slice(0, Math.max(0, room - 1))}…` : valueLine, ...tail].join('\n').slice(0, maxLength);
 }
 
 /**
@@ -157,6 +186,7 @@ function runJobFor({ config, watch, run, action, value, previousValue, observedA
     const job = {};
     for (const k of JOB_FIELDS) if (action[k] !== undefined && action[k] !== null) job[k] = action[k];
     if (action.firing_arg) {
+        const evidence = evidenceFor({ watch, value, previousValue, observedAt });
         job.args = {
             ...(job.args || {}),
             [action.firing_arg]: {
@@ -166,6 +196,8 @@ function runJobFor({ config, watch, run, action, value, previousValue, observedA
                 observed_at: observedAt ? new Date(observedAt).toISOString() : null,
                 value: value === undefined ? null : value,
                 previous_value: previousValue === undefined ? null : previousValue,
+                source_url: evidence.source_url,
+                fetched_at: evidence.fetched_at,
             },
         };
     }
@@ -195,7 +227,7 @@ function createActions({ db, config, notifications = null, post = null, actor = 
         retry: db.prepare('UPDATE action_runs SET next_attempt_at = ?, last_error = ? WHERE rid = ?'),
         counts: db.prepare(`SELECT COUNT(*) FILTER (WHERE state = 'queued') AS queued, COUNT(*) FILTER (WHERE state = 'failed') AS failed,
             COUNT(*) FILTER (WHERE state = 'sent') AS sent FROM action_runs`),
-        recent: db.prepare(`SELECT check_run_id, action_index, kind, state, attempts, last_error, created_at, finished_at FROM action_runs
+        recent: db.prepare(`SELECT check_run_id, action_index, kind, state, attempts, last_error, request, created_at, finished_at FROM action_runs
             WHERE watch_id = ? ORDER BY rid DESC LIMIT ?`),
     };
 
@@ -203,6 +235,7 @@ function createActions({ db, config, notifications = null, post = null, actor = 
     async function queue({ watch, run, owner, value, previousValue, observedAt }) {
         const list = Array.isArray(watch.action) ? watch.action : [];
         const at = now();
+        const evidence = evidenceFor({ watch, value, previousValue, observedAt });
         for (let i = 0; i < list.length; i++) {
             const action = list[i] || {};
             const kind = String(action.kind || '');
@@ -242,6 +275,8 @@ function createActions({ db, config, notifications = null, post = null, actor = 
             } else {
                 state = 'unavailable'; error = `watch.action_unavailable: unknown action kind ${kind || '(none)'}`;
             }
+            // The UI shows the same evidence the alert carried; a notification keeps it in rich_content.
+            if (Object.keys(request).length && kind !== 'notification') request = { ...request, evidence };
             await st.insert.run(watch.id, run.id, i, kind || 'unknown', String(owner || ''), JSON.stringify(request), state, error, at, state === 'queued' ? null : at);
         }
     }
@@ -415,6 +450,12 @@ function createActions({ db, config, notifications = null, post = null, actor = 
         return (await st.recent.all(watchId, limit)).map((r) => ({
             check_run_id: r.check_run_id, kind: r.kind, state: r.state, attempts: Number(r.attempts),
             error: r.last_error || null,
+            // The delivery body the action carried (the evidence bundle), so the page can show it.
+            request: (() => {
+                let request = r.request;
+                if (typeof request === 'string') { try { request = JSON.parse(request); } catch { request = null; } }
+                return request == null ? null : request;
+            })(),
             created_at: new Date(Number(r.created_at)).toISOString(),
             finished_at: r.finished_at == null ? null : new Date(Number(r.finished_at)).toISOString(),
         }));

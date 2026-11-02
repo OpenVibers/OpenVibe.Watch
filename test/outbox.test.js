@@ -67,7 +67,8 @@ t('expand copies only pending legacy rows into the exact SDK table', async () =>
 
 t('rows wait with the relay off and an aborted change has no event', async () => {
     // The rest of the schema (0005 on): the service writes today's columns (watches.project_env since 0010).
-    await db.migrate({ dir: migrations, log: silent });
+    // windowDays 0: this simulated old database applies the 0013 contract at once, then today's 0014.
+    await db.migrate({ dir: migrations, windowDays: 0, log: silent });
     svc = await start({ config: config(''), db, fetchImpl: fakeFetch, log: silent, listen: false });
     assert.deepStrictEqual(await svc.outbox.status(), { enabled: false, pending: 1, rejected: 0, last_error: null });
     await assert.rejects(db.tx(async () => {
