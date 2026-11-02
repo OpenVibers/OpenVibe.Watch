@@ -133,9 +133,13 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     assert.strictEqual(p.subjectId, person.sub);
     assert.deepStrictEqual([p.type, p.service, p.category, p.priority], ['WATCH_TRIGGERED', 'watch', 'service', 'high']);
     assert.strictEqual(p.title, '“Widget price” fired');
-    assert.strictEqual(p.message, '7.50 (was 19.99)');
+    assert.match(p.message, /^7\.50 \(was 19\.99\) · from http:\/\/127\.0\.0\.1:\d+\/price · fetched \d{4}-\d{2}-\d{2}T/);
     assert.strictEqual(p.url, `https://openvibe.watch/watches/${w.id}`);
     assert.strictEqual(p.rich_content.check_run_id, out.run.id);
+    // The alert carries its evidence: before and after, the source and when it was fetched.
+    assert.deepStrictEqual(p.rich_content.evidence, {
+        before: '19.99', after: '7.50', source_url: `${web.origin}/price`, fetched_at: p.rich_content.observed_at,
+    });
     assert.strictEqual((await acts(w.id))[0].state, 'sent');
 
     await svc.actions.tick();
@@ -220,6 +224,9 @@ t('a webhook action POSTs the firing, signed as an Events delivery; the receiver
     assert.deepStrictEqual([body.type, body.watch.id, body.watch.name, body.check_run_id], ['watch.watch.triggered', w.id, 'hooked', out.run.id]);
     assert.strictEqual(body.watch.url, `https://openvibe.watch/watches/${w.id}`);
     assert.deepStrictEqual([body.observation.value, body.observation.previous_value], ['7.50', '19.99']);
+    assert.deepStrictEqual(body.evidence, {
+        before: '19.99', after: '7.50', source_url: `${web.origin}/price`, fetched_at: body.observation.observed_at,
+    });
     [row] = await acts(w.id);
     assert.deepStrictEqual([row.state, row.last_error], ['sent', null]);
     const stored = await svc.db.prepare('SELECT request FROM action_runs WHERE rid = ?').get(row.rid);
@@ -305,6 +312,8 @@ t('an actor-task action gives Actor a task for the owner, with the firing as con
     assert.strictEqual(first.budgetUsd, 0.1);
     assert.match(first.task, /^Buy two if it is still in stock\.\n\nContext: your watch “cheap widget” fired at /);
     assert.match(first.task, /Value: 7\.50 \(was 19\.99\)\./);
+    assert.match(first.task, new RegExp(`Source: ${web.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/price\\.`));
+    assert.match(first.task, /Fetched: \d{4}-\d{2}-\d{2}T/);
     assert.ok(first.task.includes(`https://openvibe.watch/watches/${w.id}`));
     const [row] = await acts(w.id);
     assert.deepStrictEqual([row.state, row.last_error], ['sent', 'Actor task tsk_01JAB2C3D4E5F6G7H8J9K0MN02']);
@@ -460,6 +469,21 @@ t('readiness counts the queue, and the watch page says what the watch did when i
     assert.match(body, /What it did when it fired/);
     assert.match(body, /Notification/);
     assert.match(body, /class="badge ok">sent</);
+    // The page shows what the alert carried: before, after, source and fetch time.
+    assert.match(body, /Before <code[^>]*>19\.99<\/code>; after <code[^>]*>7\.50<\/code>/);
+    assert.match(body, new RegExp(`from <code>${web.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/price<\\/code>, fetched <time`));
+});
+
+t('an alert leaves out the source and fetched lines when the watch stored neither', () => {
+    const { notificationFor } = require('../server/actions');
+    const p = notificationFor({
+        config: { baseUrl: 'https://openvibe.watch' },
+        watch: { id: 'wch_01JAB2C3D4E5F6G7H8J9K0MNPQ', name: 'an event', source: { kind: 'event', pattern: 'live.stream.started' } },
+        run: { id: 'ckr_01JAB2C3D4E5F6G7H8J9K0MNPQ' },
+        action: {}, value: 'v1', previousValue: undefined, observedAt: null,
+    });
+    assert.strictEqual(p.message, 'v1', 'no invented URL or time');
+    assert.deepStrictEqual(p.rich_content.evidence, { before: null, after: 'v1', source_url: null, fetched_at: null });
 });
 
 t('done', async () => { await web.close(); await svc.stop(); });

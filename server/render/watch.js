@@ -5,7 +5,7 @@
  * honesty rule applied to the site: the words are derived from the stored watch and the recorded
  * state, never a guess, and everything goes through the escaping `html` tag.
  */
-const { html } = require('./html');
+const { html, time } = require('./html');
 
 const CADENCES = [
     { sec: 900, label: 'every 15 minutes' },
@@ -36,6 +36,19 @@ function valueWords(value, max = 90) {
     if (value === undefined || value === null) return html`<span class="muted">nothing stated</span>`;
     const text = typeof value === 'string' ? value : JSON.stringify(value);
     return html`<code title="${String(text).slice(0, 200)}">${short(text, max)}</code>`;
+}
+
+/**
+ * The evidence one alert carries, in words: the value before and after, the source address and when
+ * the value was fetched. A part the watch did not store is left out, never filled in.
+ */
+function evidenceWords(evidence) {
+    if (!evidence) return '';
+    const before = evidence.before == null ? html`<span class="muted">nothing recorded</span>` : valueWords(evidence.before, 60);
+    const after = evidence.after == null ? html`<span class="muted">nothing stated</span>` : valueWords(evidence.after, 60);
+    const from = evidence.source_url ? html`, from <code>${evidence.source_url}</code>` : '';
+    const fetched = evidence.fetched_at ? html`, fetched ${time(evidence.fetched_at)}` : '';
+    return html`<span class="muted small">Before ${before}; after ${after}${from}${fetched}.</span>`;
 }
 
 function extractionWords(extraction) {
@@ -74,30 +87,44 @@ function conditionWords(condition, { forSec = true } = {}) {
     return core;
 }
 
-/** The watch as one sentence: "Tell me when … on …, checked every …". */
-function inWords(watch) {
+/** What the watch reads, as words: "the text of .price on shop.example". */
+function subjectWords(watch) {
     const source = watch.source || {};
     const e = watch.extraction || {};
     const path = (e.kind === 'json' || e.kind === 'jsonpath') && e.value_path ? e.value_path : null;
-    let what;
     if (source.kind === 'feed') {
-        what = e.value_path ? html`${extractionWords(watch.extraction)} of the newest item of the feed` : 'the newest item of the feed';
-    } else if (source.kind === 'webhook') {
-        what = path ? html`the value at <code>${path}</code> in a webhook delivery` : (e.kind === 'text' ? 'what a webhook delivery says' : 'a webhook delivery');
-    } else if (source.kind === 'node') {
-        const target = (source.probe && source.probe.target) || '';
-        what = /^tcp:/.test(target) ? html`<b>${host(target)}</b>, seen from your computer,` : html`${extractionWords(watch.extraction)} on <b>${host(target)}</b>, seen from your computer,`;
-    } else if (source.kind === 'event') {
-        what = path ? html`the value at <code>${path}</code> of a <b>${source.pattern}</b> event` : html`a <b>${source.pattern}</b> event`;
-    } else {
-        what = html`${extractionWords(watch.extraction)} on <b>${host(source.url)}</b>`;
+        return e.value_path ? html`${extractionWords(watch.extraction)} of the newest item of the feed` : 'the newest item of the feed';
     }
-    const every = watch.cadence ? `, checked ${everyWords(watch.cadence.every_sec)}` : '';
+    if (source.kind === 'webhook') {
+        return path ? html`the value at <code>${path}</code> in a webhook delivery` : (e.kind === 'text' ? 'what a webhook delivery says' : 'a webhook delivery');
+    }
+    if (source.kind === 'node') {
+        const target = (source.probe && source.probe.target) || '';
+        return /^tcp:/.test(target) ? html`<b>${host(target)}</b>, seen from your computer` : html`${extractionWords(watch.extraction)} on <b>${host(target)}</b>, seen from your computer`;
+    }
+    if (source.kind === 'event') {
+        return path ? html`the value at <code>${path}</code> of a <b>${source.pattern}</b> event` : html`a <b>${source.pattern}</b> event`;
+    }
+    return html`${extractionWords(watch.extraction)} on <b>${host(source.url)}</b>`;
+}
+
+/**
+ * The structured condition as one sentence without the request around it:
+ * "the text of .price on shop.example drops below 20". The watch list and the watch page both use it.
+ */
+function conditionSentence(watch) {
+    const source = watch.source || {};
     const c = watch.condition || {};
     if (source.kind === 'node' && /^tcp:/.test((source.probe && source.probe.target) || '') && c.op === 'eq' && c.value === 'down') {
-        return html`Tell me when <b>${host(source.probe.target)}</b> stops answering, seen from your computer${every}.`;
+        return html`<b>${host(source.probe.target)}</b> stops answering, seen from your computer`;
     }
-    return html`Tell me when ${what} ${conditionWords(watch.condition)}${every}.`;
+    return html`${subjectWords(watch)} ${conditionWords(watch.condition)}`;
+}
+
+/** The watch as one sentence: "Tell me when … on …, checked every …". */
+function inWords(watch) {
+    const every = watch.cadence ? `, checked ${everyWords(watch.cadence.every_sec)}` : '';
+    return html`Tell me when ${conditionSentence(watch)}${every}.`;
 }
 
 /** The plain words for one check state; `run` supplies the HTTP status a failure answered with. */
@@ -132,6 +159,6 @@ const statusWords = (status) => STATUS_WORDS[status] || String(status || 'unknow
 const statusKind = (status) => (status === 'active' ? 'ok' : status === 'paused' ? 'warn' : status === 'failed' ? 'bad' : '');
 
 module.exports = {
-    inWords, conditionWords, extractionWords, valueWords, everyWords, stateWords, stateKind,
+    inWords, conditionSentence, conditionWords, extractionWords, valueWords, evidenceWords, everyWords, stateWords, stateKind,
     statusWords, statusKind, host, short, CADENCES, CADENCE_OPTIONS, MIN_CADENCE_SEC,
 };
