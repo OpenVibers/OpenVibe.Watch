@@ -589,7 +589,6 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
             styles: [showcase.STYLESHEET],
             css: ['css/home.css'],
             // The rule that shows the picked group: one per group, so the CSS is written for this page.
-            inlineStyles: [`@supports selector(:has(*)){@media (max-width:640px){${S.pickRules('ready', readyPanes.map((p) => p.id))}}}`],
             body: html`${raw(hero)}
 ${raw(showcase.features({
                 id: 'start',

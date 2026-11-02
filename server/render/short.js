@@ -25,23 +25,15 @@ function pickBlock({ key, label, head = '', panes, bodyClass = '' }) {
     // A pane with nothing to show is left out, so the chips and the rules that show them match the page.
     panes = (panes || []).filter((p) => p.html);
     if (!panes.length) return '';
-    const chips = panes.map((p, i) => `<input type="radio" name="pick-${esc(key)}" id="pk-${esc(key)}-${esc(p.id)}" value="${esc(p.id)}"${i === 0 ? ' checked' : ''}><label for="pk-${esc(key)}-${esc(p.id)}">${esc(p.label)}</label>`).join('');
+    const chips = panes.map((p) => `<a class="pick-chip" href="#${esc(p.id)}">${esc(p.label)}</a>`).join('');
     // The pane carries the id the page already links to (an anchor in the hero, for instance), so a link to it still
     // opens that pane on a phone (the CSS shows the pane a link points at).
     const body = panes.map((p) => `<div class="pick-pane" id="${esc(p.id)}">${p.html}</div>`).join('');
-    const bar = `${head ? `<div class="pick-head"><h2>${esc(head)}</h2></div>` : ''}<div class="pick-row" role="radiogroup" aria-label="${esc(label)}">${chips}</div>`;
+    const bar = `${head ? `<div class="pick-head"><h2>${esc(head)}</h2></div>` : ''}<nav class="pick-row" aria-label="${esc(label)}">${chips}</nav>`;
     return `<div class="pick" id="pick-${esc(key)}"><div class="pick-bar">${bar}</div><div class="pick-body${bodyClass ? ' ' + esc(bodyClass) : ''}">${body}</div></div>`;
 }
 
-/** The rule that shows the picked block of a pick block: one per block, so the CSS is written for the page. */
-function pickRule(key, id) {
-    return `.pick:has(#pk-${key}-${id}:checked) #${id}{display:block}`;
-}
 
-/** The rules for every block of a pick block, in the order they appear. */
-function pickRules(key, ids) {
-    return ids.map((id) => pickRule(key, id)).join('');
-}
 
 /**
  * A fold. The head is the heading the block had; the html is what it holds.
@@ -83,4 +75,4 @@ function foldSection(html, needle, id) {
     return html.slice(0, start) + openTag + fold + html.slice(close);
 }
 
-module.exports = { pickBlock, pickRule, pickRules, foldBlock, foldScript, foldSection };
+module.exports = { pickBlock, foldBlock, foldScript, foldSection };

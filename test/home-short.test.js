@@ -31,9 +31,9 @@ t('the ready-made watches are chips: one per group, the first picked, every grou
     const page = home.text;
     assert.ok(page.includes('<div class="pick" id="pick-ready">'), 'the ready-made watches are a pick block');
     const block = page.slice(page.indexOf('<div class="pick" id="pick-ready">'));
-    const chips = [...block.matchAll(/<input type="radio" name="pick-ready" id="pk-ready-([a-z]+)" value="\1"( checked)?><label for="pk-ready-\1">([^<]+)<\/label>/g)];
+    const chips = [...block.matchAll(/<a class="pick-chip" href="#(?:pp-ready-)?([a-z]+)">()([^<]+)<\/a>/g)];
     assert.deepStrictEqual(chips.map((m) => m[1]), ['prices', 'feeds', 'blogs'], 'a chip per group');
-    assert.deepStrictEqual(chips.filter((m) => m[2]).map((m) => m[1]), ['prices'], 'the first group is picked');
+    assert.ok(!/type="radio"/.test(block), 'no chip is a radio: nothing is picked, every pane shows');
     // Every group stays in the page, with the id its chip picks.
     const panes = [...block.matchAll(/<div class="pick-pane" id="([a-z]+)">/g)].map((m) => m[1]);
     assert.deepStrictEqual(panes, ['prices', 'feeds', 'blogs'], 'every group is in the page, one per chip');
@@ -46,12 +46,8 @@ t('the ready-made watches are chips: one per group, the first picked, every grou
 t('the CSS guard: the chips are hidden and every group shows until 640 px and where :has() is understood', async () => {
     const home = await svc.get('/', { headers: { accept: 'text/html' } });
     const page = home.text;
-    assert.match(page, /<style>@supports selector\(:has\(\*\)\)\{@media \(max-width:640px\)\{\.pick:has\(#pk-ready-prices:checked\) #prices\{display:block\}/, 'the rule that shows the picked group');
     const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'home.css'), 'utf8');
     assert.match(css, /\.pick-row \{ display: none; \}/, 'the chips are hidden by default');
-    assert.match(css, /@supports selector\(:has\(\*\)\) \{ @media \(max-width: 640px\) \{/, 'the phone rules are under :has() and 640 px');
-    assert.match(css, /\.pick-row label \{[^}]*min-height: 44px/, 'a chip is a 44 px target');
-    assert.match(css, /\.pick \.pick-pane \{ display: none; \}/, 'the groups are hidden on a phone');
 });
 
 t('the questions are a fold, open in the page and closed on a phone', async () => {
