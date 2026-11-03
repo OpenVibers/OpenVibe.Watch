@@ -972,6 +972,8 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         const row = await owned(req, res);
         if (!row) return notFoundPage(req, res);
         await registry.remove(row.id, principalOf(req));
+        // As the API's delete does: its webhook secret or address goes, and a YouTube hub is told to stop.
+        if (ctx.webhookSources) await ctx.webhookSources.forget(row.id);
         return res.redirect(303, '/watches');
     });
 

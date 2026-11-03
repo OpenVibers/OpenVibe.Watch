@@ -133,6 +133,17 @@ t('leases ending within two days are renewed; leaving YouTube tells the hub, whi
     assert.deepStrictEqual([confirm.status, await confirm.text()], [200, 'bye']);
 });
 
+t('deleting a YouTube watch on its page tells the hub and drops its secret', async () => {
+    const made = await api('POST', '/api/v1/watches', { token: ME, body: { name: 'to delete', source: { kind: 'webhook', endpoint: '/internal/hooks/x' }, cadence: null, extraction: { kind: 'json', value_path: 'videos.0.title' }, condition: { op: 'contains', value: 'x' }, action: [{ kind: 'notification' }] } });
+    const id = made.body.watch.id;
+    assert.strictEqual((await api('POST', `/api/v1/watches/${id}/webhook-secret`, { token: ME, body: { provider: 'youtube', channel_id: CHANNEL } })).status, 200);
+    const del = await svc.get(`/watches/${id}/delete`, { as: { subject: me, username: 'yt-owner' }, form: {} });
+    assert.strictEqual(del.status, 303);
+    const last = hub.calls[hub.calls.length - 1];
+    assert.deepStrictEqual([last['hub.mode'], last['hub.callback']], ['unsubscribe', `${svc.config.baseUrl}/hooks/${id}`]);
+    assert.strictEqual(await svc.db.prepare('SELECT 1 FROM webhook_secrets WHERE watch_id = ?').get(id), undefined);
+});
+
 t('stop', async () => { await svc.stop(); await hub.close(); });
 
 t.run();
