@@ -91,6 +91,8 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     }
     // Webhook sources (plan T18 step 5, server/webhook-sources.js): public, signed with the watch's own secret, read raw
     // (the signature covers the exact bytes), so no body parser runs before it.
+    // Email in (A3): the Cloudflare mail Worker posts each message here, signed with WATCH_MAIL_INGRESS_SECRET.
+    if (webhookSources) app.post('/hooks/email', (req, res) => { webhookSources.receiveMail(req, res).catch((err) => { log.error(`[webhook-sources] mail: ${err.message}`); if (!res.headersSent) res.status(500).end(); }); });
     if (webhookSources) app.post('/hooks/:id', (req, res) => { webhookSources.receive(req, res).catch((err) => { log.error(`[webhook-sources] ${err.message}`); if (!res.headersSent) res.status(500).end(); }); });
     app.use('/api', express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] }));
 

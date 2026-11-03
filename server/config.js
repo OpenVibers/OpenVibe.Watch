@@ -93,6 +93,12 @@ function load(env = process.env) {
         webhookSources: {
             maxPerWatchPerHour: int(env.WATCH_WEBHOOK_MAX_PER_HOUR, 60),
         },
+        // Email in (agent plan A3, server/webhook-sources.js): addresses at WATCH_MAIL_DOMAIN; the Cloudflare mail Worker
+        // signs what it posts to /hooks/email with WATCH_MAIL_INGRESS_SECRET. Without the secret there is no email in.
+        mailIn: {
+            domain: (env.WATCH_MAIL_DOMAIN || 'openvibe.watch').trim().toLowerCase(),
+            ingressSecret: env.WATCH_MAIL_INGRESS_SECRET || null,
+        },
 
         // Actions (server/actions.js): every WATCH_ACTIONS_TICK_MS deliver up to WATCH_ACTIONS_BATCH queued actions of fired
         // watches. Notifications need the Network OAuth client secret (a token for network.notifications.push).

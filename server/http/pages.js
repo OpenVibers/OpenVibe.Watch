@@ -826,6 +826,8 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: CREATE_S
         const runs = await check.list(row.id, { before: ridBefore(req.query.checks_before), limit: obsLimit(req.query.checks_limit) });
         const acts = actions ? await actions.recent(row.id, 10) : [];
         const hookProvider = v.source.kind === 'webhook' && ctx.webhookSources && ctx.webhookSources.providerOf ? await ctx.webhookSources.providerOf(row.id) : null;
+        const hookAddress = hookProvider === 'email' && ctx.webhookSources.addressOf ? await ctx.webhookSources.addressOf(row.id) : null;
+        const mailIn = !!(config.mailIn && config.mailIn.ingressSecret);
         const configuredActions = (v.action || []).map((a) => a.kind === 'actor-agent'
             ? html`<div>Run agent <a href="https://openvibe.actor/me/agents/${a.agent_id}"><code>${a.agent_id}</code></a>${a.note ? html` — ${a.note}` : ''}</div>`
             : a.kind === 'codes-run'
@@ -891,10 +893,14 @@ ${ran ? notice(html`The check ran: <strong>${W.stateWords(ran)}</strong>.`, ran 
 ${testRun ? testCheckNotice(testRun, testObs, v) : ''}
 <dl class="facts">
 <dt>Status</dt><dd>${badge(unarmed ? 'Not armed yet' : W.statusWords(v.status), unarmed ? 'warn' : W.statusKind(v.status))}</dd>
-${v.source.kind === 'webhook'
+${v.source.kind === 'webhook' && hookAddress
+                ? html`<dt>Email address</dt><dd><code class="copyable">${hookAddress}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><input type="hidden" name="provider" value="email"><button class="btn" type="submit">Make a new address</button></form><br><span class="muted small">Mail sent here wakes the watch. Anyone with the address can, so give it only to senders you mean; a new address retires this one.</span>
+<details class="hook-provider"><summary>Use a webhook instead?</summary><p class="muted small">A webhook address with a secret of Watch's own replaces the email address, which stops working at once.</p><form method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a webhook secret</button></form></details></dd>`
+                : v.source.kind === 'webhook'
                 ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">${hookProvider ? `Signed by ${({ slack: 'Slack', stripe: 'Stripe', discord: 'Discord' })[hookProvider] || hookProvider} with the key you gave. A new secret of Watch's own replaces it.` : 'The secret was shown once, when the watch was made. A new one replaces it at once.'}</span>
 <details class="hook-provider"><summary>Signed by Slack, Stripe or Discord?</summary><p class="muted small">They sign with a key of their own: paste it here and Watch checks their signature instead of its own. It is kept to check each delivery and never shown again.</p>
-<form method="post" action="/watches/${v.id}/webhook-secret"><label>Sender <select name="provider"><option value="slack">Slack (signing secret)</option><option value="stripe">Stripe (endpoint secret, whsec_…)</option><option value="discord">Discord (application public key)</option></select></label> <label>Its signing secret <input name="secret" type="password" autocomplete="off" required maxlength="220"></label> <button class="btn" type="submit">Use it</button></form></details></dd>`
+<form method="post" action="/watches/${v.id}/webhook-secret"><label>Sender <select name="provider"><option value="slack">Slack (signing secret)</option><option value="stripe">Stripe (endpoint secret, whsec_…)</option><option value="discord">Discord (application public key)</option></select></label> <label>Its signing secret <input name="secret" type="password" autocomplete="off" required maxlength="220"></label> <button class="btn" type="submit">Use it</button></form></details>${mailIn ? html`
+<details class="hook-provider"><summary>Wake it by email?</summary><p class="muted small">The watch gets an address of its own at ${config.mailIn.domain}: mail sent there runs the check with its sender, subject and text. It replaces the webhook secret.</p><form method="post" action="/watches/${v.id}/webhook-secret"><input type="hidden" name="provider" value="email"><button class="btn" type="submit">Give it an email address</button></form></details>` : ''}</dd>`
                 : html`<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>`}
 <dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : (v.source.kind === 'webhook' ? 'when a delivery arrives' : (v.source.kind === 'event' ? 'when its event arrives' : 'not polled'))}</dd>
 <dt>Actions</dt><dd>${configuredActions}</dd>
@@ -999,7 +1005,20 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         res.set('Referrer-Policy', 'no-referrer');
         return page(req, res, {
             title: `${v.name}: webhook address`, private: true, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name, href: `/watches/${v.id}` }],
-            body: hook.provider ? html`<h1>Your webhook is ready</h1>
+            body: hook.provider === 'email' ? html`<h1>Your watch has an email address</h1>
+${notice('Mail sent to this address wakes the watch. The address is the key: anyone who has it can wake the watch, so give it only to senders you mean.', 'ok')}
+<dl class="facts">
+<dt>Address</dt><dd><code class="copyable">${hook.address}</code></dd>
+</dl>
+<h2>Sending to it</h2>
+<ul class="facts">
+<li><strong>From a mailbox:</strong> make a filter that forwards the mail you care about (a sender, a subject) to this address.</li>
+<li><strong>From a service:</strong> put the address where it sends its notices (an alert, a form, a store's order mail).</li>
+<li><strong>What the watch reads:</strong> <code>from</code>, <code>from_name</code>, <code>to</code>, <code>subject</code>, <code>date</code>, <code>message_id</code>, <code>text</code> (the first 20,000 characters), <code>attachments</code> (how many). For example <code>value_path: "subject"</code> with "contains" <code>invoice</code>.</li>
+<li>Mail to an address no watch has is refused, so its sender gets a bounce; a paused watch refuses it too.</li>
+</ul>
+<p>${W.inWords(v)}</p>
+<p><a class="btn" href="/watches/${v.id}">Back to the watch</a></p>` : hook.provider ? html`<h1>Your webhook is ready</h1>
 ${notice(`Deliveries to this address are checked with the ${({ slack: 'Slack', stripe: 'Stripe', discord: 'Discord' })[hook.provider]} key you gave. It is not shown again.`, 'ok')}
 <dl class="facts">
 <dt>Address</dt><dd><code class="copyable">${hook.url}</code></dd>

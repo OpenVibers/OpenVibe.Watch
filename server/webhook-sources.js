@@ -24,12 +24,22 @@
  *                          secret anyway). Discord wants an interaction reply within 3 seconds: a PING gets
  *                          { type: 1 }, anything else { type: 4, ephemeral "Got it" } at once, and the check runs
  *                          right after, with the interaction as its input.
+ *   Email in       (A3) POST …/webhook-secret { provider: 'email' } gives the watch an address of its own,
+ *                  in-<26 characters>@openvibe.watch (WATCH_MAIL_DOMAIN). Cloudflare Email Routing hands every message
+ *                  for the domain to a Worker (edge/mail-worker.js), which posts it to POST /hooks/email signed with
+ *                  WATCH_MAIL_INGRESS_SECRET (X-OpenVibe-Mail-Signature: t=<time>,v1=<hex HMAC-SHA256(secret,
+ *                  time + "." + body)>, within five minutes). The address finds the watch; the message is read
+ *                  (server/mail-parse.js) and the check runs with { from, from_name, to, subject, date, message_id,
+ *                  text, text_truncated, attachments } as its JSON input. An unknown address answers 404, and the
+ *                  Worker refuses the mail, so the sender gets a bounce. The address is the key: anyone who has it
+ *                  can wake the watch, and making a new one retires the old.
  *   Answers        200 { state, triggered } after the check; 404 for an unknown id or a watch that is not a webhook
  *                  watch; 401 for a missing or wrong signature (the same answer either way); 409 for a paused watch;
  *                  429 over the watch's hourly budget (WATCH_WEBHOOK_MAX_PER_HOUR, default 60) with Retry-After;
  *                  503 with Retry-After: 1 while the watch's previous check still runs; 413 over 256 KB.
  */
 const crypto = require('crypto');
+const { parseMail } = require('./mail-parse');
 
 const SECRET_RE = /^whk_[A-Za-z0-9_-]{43}$/;
 const TOLERANCE_SEC = 300;
@@ -40,6 +50,10 @@ const PROVIDERS = Object.freeze({
     discord: { name: 'Discord', secret: /^[0-9a-f]{64}$/, how: 'Discord signs each interaction with your application\'s key (X-Signature-Ed25519); paste its public key.' },
 });
 const MAX_BODY = 256 * 1024;
+// An email address of a watch's own: its local part is the key (Crockford base32, 26 characters, 130 bits).
+const MAIL_LOCAL_RE = /^in-[0-9a-hjkmnp-tv-z]{26}$/;
+const B32 = '0123456789abcdefghjkmnpqrstvwxyz';
+const newMailLocal = () => `in-${Array.from(crypto.randomBytes(26), (b) => B32[b & 31]).join('')}`;
 
 const newSecret = () => `whk_${crypto.randomBytes(32).toString('base64url')}`;
 const endpointFor = (watchId) => `/internal/hooks/${watchId}`;
@@ -110,12 +124,17 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
     const maxPerHour = Number.isInteger(config.webhookSources && config.webhookSources.maxPerWatchPerHour) && config.webhookSources.maxPerWatchPerHour > 0
         ? config.webhookSources.maxPerWatchPerHour : 60;
     const counts = new Map();   // watch id → { hour, n }
+    const mail = {
+        domain: String((config.mailIn && config.mailIn.domain) || 'openvibe.watch').toLowerCase(),
+        ingressSecret: (config.mailIn && config.mailIn.ingressSecret) || null,
+    };
     const st = {
         set: db.prepare(`INSERT INTO webhook_secrets (watch_id, secret, created_at, provider) VALUES (?, ?, ?, ?)
             ON CONFLICT (watch_id) DO UPDATE SET secret = excluded.secret, created_at = excluded.created_at, provider = excluded.provider`),
         get: db.prepare('SELECT secret, provider FROM webhook_secrets WHERE watch_id = ?'),
         drop: db.prepare('DELETE FROM webhook_secrets WHERE watch_id = ?'),
         watch: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
+        byMail: db.prepare("SELECT watch_id FROM webhook_secrets WHERE provider = 'email' AND secret = ?"),
     };
 
     /**
@@ -125,6 +144,12 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
      */
     async function issue(watchId, { provider = null, secret: theirs = null } = {}) {
         const url = `${config.baseUrl}/hooks/${watchId}`;
+        if (provider === 'email') {
+            if (!mail.ingressSecret) return { error: 'email in is not set up on this server' };
+            const local = newMailLocal();
+            await st.set.run(watchId, local, now(), 'email');
+            return { url, provider: 'email', address: `${local}@${mail.domain}`, signature: 'Mail sent to this address wakes the watch: the address is the key.' };
+        }
         if (provider != null && provider !== '') {
             const p = PROVIDERS[provider];
             if (!p) return { error: `provider is one of ${Object.keys(PROVIDERS).join(', ')}` };
@@ -138,6 +163,11 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
         return { url, secret, signature: 'X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the body with the secret>, Authorization: Bearer <secret>, or Telegram\'s X-Telegram-Bot-Api-Secret-Token' };
     }
     async function forget(watchId) { await st.drop.run(watchId); }
+    /** The watch's email address, when it has one (shown to its owner on the watch's page). */
+    async function addressOf(watchId) {
+        const row = await st.get.get(watchId);
+        return row && row.provider === 'email' && MAIL_LOCAL_RE.test(row.secret) ? `${row.secret}@${mail.domain}` : null;
+    }
     /** Whose secret signs this watch's deliveries: null for Watch's own, else 'slack' or 'stripe'. */
     async function providerOf(watchId) { return ((await st.get.get(watchId)) || {}).provider || null; }
 
@@ -215,7 +245,51 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
         return res.json({ watch_id: id, state: out && out.run ? out.run.state : null, triggered: !!(out && out.met) });
     }
 
-    return { issue, forget, providerOf, receive, endpointFor, verified, SECRET_RE, PROVIDERS };
+    /**
+     * POST /hooks/email — a message from the mail Worker (edge/mail-worker.js): { to, from, raw (base64), truncated },
+     * signed with WATCH_MAIL_INGRESS_SECRET. Answers as /hooks/:id does; 404 makes the Worker refuse the mail.
+     */
+    async function receiveMail(req, res) {
+        let raw;
+        try { raw = await readRaw(req); } catch (err) { return problem(res, err.status || 400, err.status === 413 ? 'watch.too_large' : 'watch.bad_request', err.status === 413 ? 'a delivery is at most 256 KB' : 'unreadable body'); }
+        if (!mail.ingressSecret) return problem(res, 404, 'watch.not_found', 'email in is not set up on this server');
+        if (!mailSigned(mail.ingressSecret, raw, req.headers, now())) return problem(res, 401, 'watch.bad_signature', 'the delivery is not signed by the mail ingress');
+        let msg;
+        try { msg = JSON.parse(raw.toString('utf8')); } catch { return problem(res, 400, 'watch.bad_request', 'the delivery is not JSON'); }
+        const to = String((msg && msg.to) || '').trim().toLowerCase();
+        const at = to.lastIndexOf('@');
+        const local = at > 0 ? to.slice(0, at) : '';
+        const found = at > 0 && to.slice(at + 1) === mail.domain && MAIL_LOCAL_RE.test(local) ? await st.byMail.get(local) : null;
+        const row = found ? await st.watch.get(found.watch_id) : null;
+        const source = row ? (typeof row.source === 'string' ? JSON.parse(row.source) : row.source) : null;
+        if (!row || !source || source.kind !== 'webhook') return problem(res, 404, 'watch.not_found', 'no watch has this address');
+        if (row.status !== 'active') return problem(res, 409, 'watch.disabled', `the watch is ${row.status}`);
+        if (!underBudget(row.id)) return problem(res, 429, 'watch.rate_limited', `at most ${maxPerHour} deliveries an hour wake one watch`, { 'Retry-After': String(retryAfter()) });
+        const parsed = parseMail(Buffer.from(String(msg.raw || ''), 'base64'));
+        // The envelope is what Email Routing checked; the headers are what the sender wrote.
+        const input = { ...parsed, from: String(msg.from || parsed.from || '').slice(0, 320), to, header_from: parsed.from, truncated: !!msg.truncated };
+        let out;
+        try {
+            out = await check.run(row.id, { trigger: 'webhook', input: { body: Buffer.from(JSON.stringify(input)), content_type: 'application/json' } });
+        } catch (err) {
+            log.error(`[webhook-sources] mail ${row.id}: ${err.message}`);
+            return problem(res, 500, 'watch.internal', 'the check failed; try again');
+        }
+        if (out && out.busy) return problem(res, 503, 'watch.busy', 'the watch\'s previous check is still running', { 'Retry-After': '1' });
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json({ watch_id: row.id, state: out && out.run ? out.run.state : null, triggered: !!(out && out.met) });
+    }
+
+    return { issue, forget, providerOf, addressOf, receive, receiveMail, endpointFor, verified, SECRET_RE, PROVIDERS };
 }
 
-module.exports = { createWebhookSources, verified, endpointFor, newSecret, PROVIDERS };
+/** The mail Worker's signature: X-OpenVibe-Mail-Signature: t=<time>,v1=<hex HMAC-SHA256(secret, time + "." + body)>. */
+function mailSigned(secret, raw, headers, nowMs = Date.now()) {
+    const parts = String(headers['x-openvibe-mail-signature'] || '').split(',').map((x) => x.trim().split('='));
+    const t = (parts.find(([k]) => k === 't') || [])[1];
+    if (!secret || !fresh(t, nowMs)) return false;
+    const want = hmac(secret, Buffer.concat([Buffer.from(`${t}.`), raw]));
+    return parts.filter(([k]) => k === 'v1').some(([, v]) => safeEqual(v || '', want));
+}
+
+module.exports = { createWebhookSources, verified, mailSigned, endpointFor, newSecret, newMailLocal, MAIL_LOCAL_RE, PROVIDERS };
