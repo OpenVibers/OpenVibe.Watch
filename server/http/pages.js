@@ -825,6 +825,7 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: CREATE_S
         const obs = await observations.list(row.id, { before: ridBefore(req.query.obs_before), limit: obsLimit(req.query.obs_limit) });
         const runs = await check.list(row.id, { before: ridBefore(req.query.checks_before), limit: obsLimit(req.query.checks_limit) });
         const acts = actions ? await actions.recent(row.id, 10) : [];
+        const hookProvider = v.source.kind === 'webhook' && ctx.webhookSources && ctx.webhookSources.providerOf ? await ctx.webhookSources.providerOf(row.id) : null;
         const configuredActions = (v.action || []).map((a) => a.kind === 'actor-agent'
             ? html`<div>Run agent <a href="https://openvibe.actor/me/agents/${a.agent_id}"><code>${a.agent_id}</code></a>${a.note ? html` — ${a.note}` : ''}</div>`
             : a.kind === 'codes-run'
@@ -891,7 +892,9 @@ ${testRun ? testCheckNotice(testRun, testObs, v) : ''}
 <dl class="facts">
 <dt>Status</dt><dd>${badge(unarmed ? 'Not armed yet' : W.statusWords(v.status), unarmed ? 'warn' : W.statusKind(v.status))}</dd>
 ${v.source.kind === 'webhook'
-                ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">The secret was shown once, when the watch was made. A new one replaces it at once.</span></dd>`
+                ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">${hookProvider ? `Signed by ${hookProvider === 'slack' ? 'Slack' : 'Stripe'} with the signing secret you gave. A new secret of Watch's own replaces it.` : 'The secret was shown once, when the watch was made. A new one replaces it at once.'}</span>
+<details class="hook-provider"><summary>Signed by Slack or Stripe?</summary><p class="muted small">They sign with a secret of their own: paste it here and Watch checks their signature instead of its own. It is kept to check each delivery and never shown again.</p>
+<form method="post" action="/watches/${v.id}/webhook-secret"><label>Sender <select name="provider"><option value="slack">Slack (signing secret)</option><option value="stripe">Stripe (endpoint secret, whsec_…)</option></select></label> <label>Its signing secret <input name="secret" type="password" autocomplete="off" required maxlength="220"></label> <button class="btn" type="submit">Use it</button></form></details></dd>`
                 : html`<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>`}
 <dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : (v.source.kind === 'webhook' ? 'when a delivery arrives' : (v.source.kind === 'event' ? 'when its event arrives' : 'not polled'))}</dd>
 <dt>Actions</dt><dd>${configuredActions}</dd>
@@ -983,7 +986,11 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         if (!row) return notFoundPage(req, res);
         const v = registry.view(row);
         if (v.source.kind !== 'webhook' || !ctx.webhookSources) return detailNotice(req, res, row, 409, 'Only a webhook watch has a secret.');
-        return secretPage(req, res, v, await ctx.webhookSources.issue(row.id), 200);
+        // A sender's own signing secret (Slack, Stripe), or a new secret of Watch's own.
+        const b = req.body || {};
+        const hook = await ctx.webhookSources.issue(row.id, { provider: b.provider || null, secret: b.secret || null });
+        if (hook.error) return detailNotice(req, res, row, 422, `Not changed: ${hook.error}.`);
+        return secretPage(req, res, v, hook, 200);
     });
 
     /** The address and secret of a webhook watch, shown once: no cache, no index, and never again after this page. */
@@ -992,7 +999,18 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         res.set('Referrer-Policy', 'no-referrer');
         return page(req, res, {
             title: `${v.name}: webhook address`, private: true, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name, href: `/watches/${v.id}` }],
-            body: html`<h1>Your webhook is ready</h1>
+            body: hook.provider ? html`<h1>Your webhook is ready</h1>
+${notice(`Deliveries to this address are checked with the ${hook.provider === 'slack' ? 'Slack' : 'Stripe'} signing secret you gave. It is not shown again.`, 'ok')}
+<dl class="facts">
+<dt>Address</dt><dd><code class="copyable">${hook.url}</code></dd>
+<dt>Signed by</dt><dd>${hook.signature}</dd>
+</dl>
+<h2>In ${hook.provider === 'slack' ? 'Slack' : 'Stripe'}</h2>
+<ul class="facts">${hook.provider === 'slack'
+                ? html`<li>In your app's <strong>Event Subscriptions</strong> (or Interactivity, or a slash command), paste the address as the Request URL. Slack sends a challenge first; Watch answers it.</li><li>A retry Slack sends because the first took more than three seconds is acknowledged without checking twice.</li>`
+                : html`<li>In <strong>Developers → Webhooks</strong>, add the address as an endpoint and choose its events. The endpoint's signing secret is the one you pasted here.</li>`}
+<li>Deliveries older than five minutes are refused, so a copied request cannot be replayed later.</li></ul>
+<p><a class="btn" href="/watches/${v.id}">Back to the watch</a></p>` : html`<h1>Your webhook is ready</h1>
 ${notice('Copy the secret now: it is not shown again. Making a new one replaces it.', 'warn')}
 <dl class="facts">
 <dt>Address</dt><dd><code class="copyable">${hook.url}</code></dd>
