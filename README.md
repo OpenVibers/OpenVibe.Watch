@@ -219,6 +219,24 @@ product (`server/webhook-sources.js`, `server/carriers/webhook.js`).
     ("Got it") at once, with the check run right after on the interaction (`value_path: "data.name"` reads a slash
     command's name). A bad signature answers 401, as Discord checks.
   - Cases: `test/webhook-providers.test.js`.
+- **Email in (agent plan A3).** A webhook watch can have an email address of its own instead of a secret: "Wake it by
+  email?" on its page, or `POST /api/v1/watches/:id/webhook-secret` with `{ "provider": "email" }`, answers
+  `{ address: "in-<26 characters>@openvibe.watch" }`. The address is the key (anyone who has it can wake the watch);
+  asking again makes a new one and retires the old, and a webhook secret replaces it.
+  - Cloudflare Email Routing receives the domain's mail (SPF, DKIM, DMARC checked there) and its catch-all rule hands
+    every message to the mail Worker ([edge/mail-worker.mjs](edge/mail-worker.mjs)). The Worker posts
+    `{ to, from, raw (base64, at most 180 KB), truncated, size }` to `POST /hooks/email` with
+    `X-OpenVibe-Mail-Signature: t=<time>,v1=<hex HMAC-SHA256 of "<time>.<body>">` (`WATCH_MAIL_INGRESS_SECRET`, within
+    five minutes).
+  - Watch finds the watch by the address, reads the message ([server/mail-parse.js](server/mail-parse.js): headers,
+    encoded words, multipart, base64 and quoted-printable, HTML-only mail as text) and runs the check on
+    `{ from, from_name, to, subject, date, message_id, text, text_truncated, attachments }` (`value_path: "subject"`).
+    `from` is the envelope sender Email Routing checked; `header_from` is what the message says.
+  - An unknown address answers 404 and a paused watch 409, and the Worker refuses the mail, so its sender gets a bounce.
+    Over the hour's budget the mail is taken and not checked; a busy watch is tried once more after 1.5 s.
+  - Deploy: `ssh host "sudo sed -n 's/^WATCH_MAIL_INGRESS_SECRET=//p' /etc/openvibe/watch.env" | node deploy/mail-worker.js --secret-stdin`
+    uploads the Worker, turns Email Routing on for the zone and points the catch-all at the Worker.
+  - Cases: `test/email-in.test.js`.
 - **What the extraction reads.** A JSON delivery is parsed and becomes the document (`value_path: "order.total"`); any
   other is read as text (`text`, `regex`). A delivery that says JSON but is not records `parse_error`.
 - **Answers.** 200 `{ watch_id, state, triggered }` after the check. 401 for a missing or wrong signature. 404 for an

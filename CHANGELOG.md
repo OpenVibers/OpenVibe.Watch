@@ -3,6 +3,13 @@
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 
+## 2026-11-03 — email in (agent plan A3)
+
+- A webhook watch can have an email address of its own (`in-…@openvibe.watch`): mail sent there runs its check on the
+  sender, subject and text. Cloudflare Email Routing hands each message to the mail Worker (`edge/mail-worker.mjs`),
+  which posts it to `POST /hooks/email`, signed; an unknown address or a paused watch bounces the mail
+  (`server/webhook-sources.js`, `server/mail-parse.js`, migration `0016_webhook_email_address`).
+
 ## 2026-11-01 — the condition in words, a quiet test before arming, and the evidence in every alert
 
 - The watch list and each watch page say the watch's structured condition in one sentence — what it reads, where,
