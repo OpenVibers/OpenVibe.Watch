@@ -97,7 +97,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.
     const eventSources = createEventSources({ db, check, config, fetchImpl, log, now });
     registry.onEventSourceChange(() => eventSources.kick());
-    const webhookSources = createWebhookSources({ db, registry, check, config, now, log });
+    const webhookSources = createWebhookSources({ db, registry, check, config, now, log, fetchImpl });
     const keys = jwksClient(config.jwksUrl, { fetch: fetchImpl, log });
     const auth = createAuth({ config, log });
     // The public site: sessions in Watch's own database, the Network key to verify a sign-in token
@@ -124,6 +124,8 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         try { await observations.prune(); } catch (err) { log.error(`[observations] prune: ${err.message}`); }
         try { await eventSources.prune(); } catch (err) { log.error(`[event-sources] prune: ${err.message}`); }
         try { await sessions.prune(); } catch (err) { log.error(`[sessions] prune: ${err.message}`); }
+        // YouTube's hub leases end after ten days: renew the ones ending within two (server/webhook-sources.js).
+        try { await webhookSources.renewLeases(); } catch (err) { log.error(`[webhook-sources] renew: ${err.message}`); }
     }, 3600 * 1000);
     pruneTimer.unref?.();
     const outboxPruneTimer = setInterval(async () => { try { await outbox.outbox.prune(); } catch (err) { log.error(`[outbox] prune: ${err.message}`); } }, 6 * 3600 * 1000);

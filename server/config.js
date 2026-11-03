@@ -99,6 +99,10 @@ function load(env = process.env) {
             domain: (env.WATCH_MAIL_DOMAIN || 'openvibe.watch').trim().toLowerCase(),
             ingressSecret: env.WATCH_MAIL_INGRESS_SECRET || null,
         },
+        // YouTube (agent plan A5, server/webhook-sources.js): the WebSub hub a YouTube watch subscribes through.
+        youtube: {
+            hub: (env.WATCH_YOUTUBE_HUB || 'https://pubsubhubbub.appspot.com/subscribe').trim(),
+        },
 
         // Actions (server/actions.js): every WATCH_ACTIONS_TICK_MS deliver up to WATCH_ACTIONS_BATCH queued actions of fired
         // watches. Notifications need the Network OAuth client secret (a token for network.notifications.push).

@@ -112,6 +112,8 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     // (the signature covers the exact bytes), so no body parser runs before it.
     // Email in (A3): the Cloudflare mail Worker posts each message here, signed with WATCH_MAIL_INGRESS_SECRET.
     if (webhookSources) app.post('/hooks/email', (req, res) => { webhookSources.receiveMail(req, res).catch((err) => { log.error(`[webhook-sources] mail: ${err.message}`); if (!res.headersSent) res.status(500).end(); }); });
+    // YouTube's hub checks a subscription with a GET before it sends anything (server/webhook-sources.js verifyIntent).
+    if (webhookSources) app.get('/hooks/:id', (req, res) => { webhookSources.verifyIntent(req, res).catch((err) => { log.error(`[webhook-sources] verify: ${err.message}`); if (!res.headersSent) res.status(500).end(); }); });
     if (webhookSources) app.post('/hooks/:id', (req, res) => { webhookSources.receive(req, res).catch((err) => { log.error(`[webhook-sources] ${err.message}`); if (!res.headersSent) res.status(500).end(); }); });
     app.use('/api', express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] }));
 
