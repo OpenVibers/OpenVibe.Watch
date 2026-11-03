@@ -102,7 +102,7 @@ function watchesRouter({ registry, auth, limits, webhookSources = null }) {
             }
             // { provider, secret }: the sender's own signing secret (Slack, Stripe) instead of a new one of Watch's.
             const b = req.body && typeof req.body === 'object' ? req.body : {};
-            const hook = await webhookSources.issue(row.id, { provider: b.provider || null, secret: b.secret || null });
+            const hook = await webhookSources.issue(row.id, { provider: b.provider || null, secret: b.secret || null, channel_id: b.channel_id || null });
             if (hook.error) return res.status(422).type('application/problem+json').send(JSON.stringify({ type: 'about:blank', title: 'watch.invalid', status: 422, code: 'watch.invalid', detail: hook.error }));
             res.json({ watch_id: row.id, webhook: hook });
         } catch (err) { fail(res, req, err); }
