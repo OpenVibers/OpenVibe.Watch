@@ -114,6 +114,22 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
 
     // ── Static assets (content-hashed ?v= → immutable) ──
     app.use('/shared', require('openvibe-shared/serve').handler());
+    // Terms, Privacy and DMCA in this site's own words (openvibe-shared/legal, profile 'service'; 11-03: the footer's
+    // legal links answered 404 here). The facts must match the code: change both together.
+    const legal = require('openvibe-shared/legal');
+    app.get(legal.PATHS, legal.handler({
+        "host": "openvibe.watch",
+        "name": "OpenVibe.Watch",
+        "id": "watch",
+        "service": "watch",
+        "profile": "service",
+        "what": "Watch a page, a feed or a JSON API and get told when the value you care about changes or crosses the line you set, checked politely on your cadence.",
+        "makes": [
+                "the watches you set",
+                "what each check found, and the alerts it sent"
+        ],
+        "fetches": true
+    }));
     app.use(express.static(PUBLIC_DIR, {
         index: false, redirect: false,
         setHeaders(res, filePath) {
