@@ -892,9 +892,9 @@ ${testRun ? testCheckNotice(testRun, testObs, v) : ''}
 <dl class="facts">
 <dt>Status</dt><dd>${badge(unarmed ? 'Not armed yet' : W.statusWords(v.status), unarmed ? 'warn' : W.statusKind(v.status))}</dd>
 ${v.source.kind === 'webhook'
-                ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">${hookProvider ? `Signed by ${hookProvider === 'slack' ? 'Slack' : 'Stripe'} with the signing secret you gave. A new secret of Watch's own replaces it.` : 'The secret was shown once, when the watch was made. A new one replaces it at once.'}</span>
-<details class="hook-provider"><summary>Signed by Slack or Stripe?</summary><p class="muted small">They sign with a secret of their own: paste it here and Watch checks their signature instead of its own. It is kept to check each delivery and never shown again.</p>
-<form method="post" action="/watches/${v.id}/webhook-secret"><label>Sender <select name="provider"><option value="slack">Slack (signing secret)</option><option value="stripe">Stripe (endpoint secret, whsec_…)</option></select></label> <label>Its signing secret <input name="secret" type="password" autocomplete="off" required maxlength="220"></label> <button class="btn" type="submit">Use it</button></form></details></dd>`
+                ? html`<dt>Webhook address</dt><dd><code>${config.baseUrl}/hooks/${v.id}</code> <form class="inline" method="post" action="/watches/${v.id}/webhook-secret"><button class="btn" type="submit">Make a new secret</button></form><br><span class="muted small">${hookProvider ? `Signed by ${({ slack: 'Slack', stripe: 'Stripe', discord: 'Discord' })[hookProvider] || hookProvider} with the key you gave. A new secret of Watch's own replaces it.` : 'The secret was shown once, when the watch was made. A new one replaces it at once.'}</span>
+<details class="hook-provider"><summary>Signed by Slack, Stripe or Discord?</summary><p class="muted small">They sign with a key of their own: paste it here and Watch checks their signature instead of its own. It is kept to check each delivery and never shown again.</p>
+<form method="post" action="/watches/${v.id}/webhook-secret"><label>Sender <select name="provider"><option value="slack">Slack (signing secret)</option><option value="stripe">Stripe (endpoint secret, whsec_…)</option><option value="discord">Discord (application public key)</option></select></label> <label>Its signing secret <input name="secret" type="password" autocomplete="off" required maxlength="220"></label> <button class="btn" type="submit">Use it</button></form></details></dd>`
                 : html`<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>`}
 <dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : (v.source.kind === 'webhook' ? 'when a delivery arrives' : (v.source.kind === 'event' ? 'when its event arrives' : 'not polled'))}</dd>
 <dt>Actions</dt><dd>${configuredActions}</dd>
@@ -1000,15 +1000,17 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         return page(req, res, {
             title: `${v.name}: webhook address`, private: true, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name, href: `/watches/${v.id}` }],
             body: hook.provider ? html`<h1>Your webhook is ready</h1>
-${notice(`Deliveries to this address are checked with the ${hook.provider === 'slack' ? 'Slack' : 'Stripe'} signing secret you gave. It is not shown again.`, 'ok')}
+${notice(`Deliveries to this address are checked with the ${({ slack: 'Slack', stripe: 'Stripe', discord: 'Discord' })[hook.provider]} key you gave. It is not shown again.`, 'ok')}
 <dl class="facts">
 <dt>Address</dt><dd><code class="copyable">${hook.url}</code></dd>
 <dt>Signed by</dt><dd>${hook.signature}</dd>
 </dl>
-<h2>In ${hook.provider === 'slack' ? 'Slack' : 'Stripe'}</h2>
+<h2>In ${({ slack: 'Slack', stripe: 'Stripe', discord: 'Discord' })[hook.provider]}</h2>
 <ul class="facts">${hook.provider === 'slack'
                 ? html`<li>In your app's <strong>Event Subscriptions</strong> (or Interactivity, or a slash command), paste the address as the Request URL. Slack sends a challenge first; Watch answers it.</li><li>A retry Slack sends because the first took more than three seconds is acknowledged without checking twice.</li>`
-                : html`<li>In <strong>Developers → Webhooks</strong>, add the address as an endpoint and choose its events. The endpoint's signing secret is the one you pasted here.</li>`}
+                : hook.provider === 'discord'
+                    ? html`<li>In the Developer Portal, under your application's <strong>General Information</strong>, paste the address as the <strong>Interactions Endpoint URL</strong>. Discord sends a ping first; Watch answers it.</li><li>Each slash command or button press gets a quiet "Got it" at once, and the watch checks right after.</li>`
+                    : html`<li>In <strong>Developers → Webhooks</strong>, add the address as an endpoint and choose its events. The endpoint's signing secret is the one you pasted here.</li>`}
 <li>Deliveries older than five minutes are refused, so a copied request cannot be replayed later.</li></ul>
 <p><a class="btn" href="/watches/${v.id}">Back to the watch</a></p>` : html`<h1>Your webhook is ready</h1>
 ${notice('Copy the secret now: it is not shown again. Making a new one replaces it.', 'warn')}
