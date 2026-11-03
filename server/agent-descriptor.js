@@ -10,6 +10,7 @@ module.exports = {
     site: 'openvibe.watch',
     api: '/api/v1',
     docs: '/how-it-works',
+    openapi: '/openapi.json',
     policy: {
         auth: ['none', 'Network OIDC'],
     },
