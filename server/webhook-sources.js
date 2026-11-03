@@ -9,7 +9,16 @@
  *                  POST /api/v1/watches/:id/webhook-secret (which replaces it). It is needed in full to check a
  *                  signature, so it is stored as it is (webhook_secrets), and it goes with its watch.
  *   Signing        X-Hub-Signature-256: sha256=<hex HMAC-SHA256(secret, raw body)> (GitHub's form; many senders use
- *                  it), or Authorization: Bearer <secret> for a sender that cannot sign. Compared in constant time.
+ *                  it), Authorization: Bearer <secret> for a sender that cannot sign, or Telegram's
+ *                  X-Telegram-Bot-Api-Secret-Token (setWebhook's secret_token: the watch's secret is a valid one).
+ *                  Compared in constant time.
+ *   A sender's own secret (agent plan A3, triggers v1): Slack and Stripe sign with a secret they make, so the person
+ *                  pastes it (POST …/webhook-secret { provider, secret }) and that scheme checks the delivery instead:
+ *                  slack   X-Slack-Signature: v0=<hex HMAC-SHA256(secret, "v0:" + X-Slack-Request-Timestamp + ":" +
+ *                          body)>, the timestamp within 5 minutes; Slack's url_verification is answered with its
+ *                          challenge, and a retry (X-Slack-Retry-Num) is acknowledged without a second check.
+ *                  stripe  Stripe-Signature: t=<time>,v1=<hex HMAC-SHA256(secret, time + "." + body)> (any v1 of
+ *                          several), the time within 5 minutes.
  *   Answers        200 { state, triggered } after the check; 404 for an unknown id or a watch that is not a webhook
  *                  watch; 401 for a missing or wrong signature (the same answer either way); 409 for a paused watch;
  *                  429 over the watch's hourly budget (WATCH_WEBHOOK_MAX_PER_HOUR, default 60) with Retry-After;
@@ -18,6 +27,12 @@
 const crypto = require('crypto');
 
 const SECRET_RE = /^whk_[A-Za-z0-9_-]{43}$/;
+const TOLERANCE_SEC = 300;
+// A sender's own secret: what it looks like, and how it is described where the person pastes it.
+const PROVIDERS = Object.freeze({
+    slack: { name: 'Slack', secret: /^[0-9a-f]{32}$/, how: 'Slack signs each request with your app\'s signing secret (X-Slack-Signature, v0).' },
+    stripe: { name: 'Stripe', secret: /^whsec_[A-Za-z0-9+/=_-]{16,200}$/, how: 'Stripe signs each event with the endpoint\'s signing secret (Stripe-Signature, v1).' },
+});
 const MAX_BODY = 256 * 1024;
 
 const newSecret = () => `whk_${crypto.randomBytes(32).toString('base64url')}`;
@@ -29,9 +44,37 @@ function safeEqual(a, b) {
     return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-/** Does the delivery carry the watch's secret: a matching body signature, or the secret as a bearer token? */
-function verified(secret, raw, headers) {
+const hmac = (secret, data) => crypto.createHmac('sha256', secret).update(data).digest('hex');
+const fresh = (ts, nowMs) => /^\d{1,12}$/.test(String(ts)) && Math.abs(Math.floor(nowMs / 1000) - Number(ts)) <= TOLERANCE_SEC;
+
+/** Slack's request signing: v0 over "v0:<timestamp>:<body>", the timestamp within five minutes. */
+function slackVerified(secret, raw, headers, nowMs) {
+    const ts = String(headers['x-slack-request-timestamp'] || '');
+    const sig = String(headers['x-slack-signature'] || '');
+    if (!fresh(ts, nowMs) || !sig.startsWith('v0=')) return false;
+    return safeEqual(sig, `v0=${hmac(secret, Buffer.concat([Buffer.from(`v0:${ts}:`), raw]))}`);
+}
+
+/** Stripe's webhook signing: v1 over "<t>.<body>" (any of several v1), t within five minutes. */
+function stripeVerified(secret, raw, headers, nowMs) {
+    const parts = String(headers['stripe-signature'] || '').split(',').map((x) => x.trim().split('='));
+    const t = (parts.find(([k]) => k === 't') || [])[1];
+    if (!fresh(t, nowMs)) return false;
+    const want = hmac(secret, Buffer.concat([Buffer.from(`${t}.`), raw]));
+    return parts.filter(([k]) => k === 'v1').some(([, v]) => safeEqual(v || '', want));
+}
+
+/**
+ * Does the delivery carry the watch's secret? With a sender's own secret (`provider`), only that sender's scheme
+ * counts; with Watch's own, a matching body signature, the secret as a bearer token, or Telegram's secret token.
+ */
+function verified(secret, raw, headers, { provider = null, now = Date.now() } = {}) {
     if (!secret) return false;
+    if (provider === 'slack') return slackVerified(secret, raw, headers, now);
+    if (provider === 'stripe') return stripeVerified(secret, raw, headers, now);
+    if (provider) return false;
+    const tg = headers['x-telegram-bot-api-secret-token'];
+    if (tg != null && safeEqual(String(tg), secret)) return true;
     const sig = String(headers['x-hub-signature-256'] || '');
     if (sig.startsWith('sha256=')) {
         const want = `sha256=${crypto.createHmac('sha256', secret).update(raw).digest('hex')}`;
@@ -47,20 +90,35 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
         ? config.webhookSources.maxPerWatchPerHour : 60;
     const counts = new Map();   // watch id → { hour, n }
     const st = {
-        set: db.prepare(`INSERT INTO webhook_secrets (watch_id, secret, created_at) VALUES (?, ?, ?)
-            ON CONFLICT (watch_id) DO UPDATE SET secret = excluded.secret, created_at = excluded.created_at`),
-        get: db.prepare('SELECT secret FROM webhook_secrets WHERE watch_id = ?'),
+        set: db.prepare(`INSERT INTO webhook_secrets (watch_id, secret, created_at, provider) VALUES (?, ?, ?, ?)
+            ON CONFLICT (watch_id) DO UPDATE SET secret = excluded.secret, created_at = excluded.created_at, provider = excluded.provider`),
+        get: db.prepare('SELECT secret, provider FROM webhook_secrets WHERE watch_id = ?'),
         drop: db.prepare('DELETE FROM webhook_secrets WHERE watch_id = ?'),
         watch: db.prepare('SELECT * FROM watches WHERE id = ? AND deleted_at IS NULL'),
     };
 
-    /** The public address and a fresh secret for a webhook watch (replacing any it had). Shown once. */
-    async function issue(watchId) {
+    /**
+     * The public address and a fresh secret for a webhook watch (replacing any it had), shown once. With a sender's own
+     * secret ({ provider: 'slack' | 'stripe', secret }), that secret is kept instead and never echoed back. A bad
+     * provider or secret answers { error } and changes nothing.
+     */
+    async function issue(watchId, { provider = null, secret: theirs = null } = {}) {
+        const url = `${config.baseUrl}/hooks/${watchId}`;
+        if (provider != null && provider !== '') {
+            const p = PROVIDERS[provider];
+            if (!p) return { error: `provider is one of ${Object.keys(PROVIDERS).join(', ')}` };
+            const value = String(theirs || '').trim();
+            if (!p.secret.test(value)) return { error: `that does not look like a ${p.name} signing secret` };
+            await st.set.run(watchId, value, now(), provider);
+            return { url, provider, signature: p.how };
+        }
         const secret = newSecret();
-        await st.set.run(watchId, secret, now());
-        return { url: `${config.baseUrl}/hooks/${watchId}`, secret, signature: 'X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the body with the secret>, or Authorization: Bearer <secret>' };
+        await st.set.run(watchId, secret, now(), null);
+        return { url, secret, signature: 'X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the body with the secret>, Authorization: Bearer <secret>, or Telegram\'s X-Telegram-Bot-Api-Secret-Token' };
     }
     async function forget(watchId) { await st.drop.run(watchId); }
+    /** Whose secret signs this watch's deliveries: null for Watch's own, else 'slack' or 'stripe'. */
+    async function providerOf(watchId) { return ((await st.get.get(watchId)) || {}).provider || null; }
 
     function retryAfter() { return 3600 - Math.floor((now() / 1000) % 3600); }
     function underBudget(id) {
@@ -96,8 +154,18 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
         const row = /^wch_[0-9A-HJKMNP-TV-Z]{26}$/.test(id) ? await st.watch.get(id) : null;
         const source = row ? (typeof row.source === 'string' ? JSON.parse(row.source) : row.source) : null;
         if (!row || !source || source.kind !== 'webhook') return problem(res, 404, 'watch.not_found', 'no webhook watch at this address');
-        const secret = (await st.get.get(id) || {}).secret || null;
-        if (!verified(secret, raw, req.headers)) return problem(res, 401, 'watch.bad_signature', 'the delivery is not signed with this watch\'s secret');
+        const kept = await st.get.get(id) || {};
+        const provider = kept.provider || null;
+        if (!verified(kept.secret || null, raw, req.headers, { provider, now: now() })) return problem(res, 401, 'watch.bad_signature', 'the delivery is not signed with this watch\'s secret');
+        if (provider === 'slack') {
+            // Slack checks a new address with a challenge it wants back, and resends an event it did not see answered
+            // within three seconds: the first delivery is the one that runs the check.
+            let msg = null;
+            try { msg = JSON.parse(raw.toString('utf8')); } catch { /* a form post or not JSON: a delivery like any other */ }
+            res.setHeader('Cache-Control', 'no-store');
+            if (msg && msg.type === 'url_verification' && typeof msg.challenge === 'string') return res.json({ challenge: msg.challenge.slice(0, 200) });
+            if (req.headers['x-slack-retry-num'] != null) return res.json({ watch_id: id, retry: true, state: null, triggered: false });
+        }
         if (row.status !== 'active') return problem(res, 409, 'watch.disabled', `the watch is ${row.status}`);
         if (!underBudget(id)) return problem(res, 429, 'watch.rate_limited', `at most ${maxPerHour} deliveries an hour wake one watch`, { 'Retry-After': String(retryAfter()) });
         let out;
@@ -112,7 +180,7 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
         return res.json({ watch_id: id, state: out && out.run ? out.run.state : null, triggered: !!(out && out.met) });
     }
 
-    return { issue, forget, receive, endpointFor, verified, SECRET_RE };
+    return { issue, forget, providerOf, receive, endpointFor, verified, SECRET_RE, PROVIDERS };
 }
 
-module.exports = { createWebhookSources, verified, endpointFor, newSecret };
+module.exports = { createWebhookSources, verified, endpointFor, newSecret, PROVIDERS };

@@ -200,8 +200,20 @@ product (`server/webhook-sources.js`, `server/carriers/webhook.js`).
   (`whk_…`) is never shown again; `POST /api/v1/watches/:id/webhook-secret` replaces it (the old one stops working at
   once). It is kept in full because checking a signature needs it (`webhook_secrets`), and it goes with its watch:
   deleting the watch or the account removes it.
-- **Signing.** `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the exact body with the secret>` (GitHub's form), or
-  `Authorization: Bearer <secret>` for a sender that cannot sign. Compared in constant time.
+- **Signing.** `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the exact body with the secret>` (GitHub's form),
+  `Authorization: Bearer <secret>` for a sender that cannot sign, or Telegram's `X-Telegram-Bot-Api-Secret-Token`
+  (give the secret as `setWebhook`'s `secret_token`). Compared in constant time.
+- **A sender's own secret (agent plan A3).** Slack and Stripe sign with a secret they make. Paste it on the watch's
+  page ("Signed by Slack or Stripe?") or send `POST /api/v1/watches/:id/webhook-secret` with
+  `{ "provider": "slack" | "stripe", "secret": "…" }`: that scheme then checks every delivery, and the secret is kept
+  (never shown again) instead of Watch's own. A bad provider or secret answers 422 and changes nothing; a new secret of
+  Watch's own (the same call with no body) replaces it.
+  - `slack`: `X-Slack-Signature: v0=<hex HMAC-SHA256 of "v0:<X-Slack-Request-Timestamp>:<body>">`, the timestamp within
+    five minutes. Slack's `url_verification` is answered with its `challenge`, and a retry (`X-Slack-Retry-Num`) is
+    acknowledged without checking twice.
+  - `stripe`: `Stripe-Signature: t=<time>,v1=<hex HMAC-SHA256 of "<time>.<body>">` (any of several `v1`), the time
+    within five minutes.
+  - Cases: `test/webhook-providers.test.js`.
 - **What the extraction reads.** A JSON delivery is parsed and becomes the document (`value_path: "order.total"`); any
   other is read as text (`text`, `regex`). A delivery that says JSON but is not records `parse_error`.
 - **Answers.** 200 `{ watch_id, state, triggered }` after the check. 401 for a missing or wrong signature. 404 for an
