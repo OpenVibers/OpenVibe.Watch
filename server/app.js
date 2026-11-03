@@ -201,6 +201,7 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
         render: require('./agent-pages').createAgentPages({ router: pageRoutes }).renderPublicPage,
     });
 
+    app.use(require('./link-header').linkHeader());   // SEO-24: the head's twin and llms.txt links, as a Link: header
     app.use(pageRoutes);
 
     app.use((req, res) => send(res, 404, {
