@@ -60,6 +60,9 @@ function createDiscoveryRoutes({ config }) {
         res.type('text/plain').set('Cache-Control', TEXT).send(seo.llmsTxt({
             name: SITE_NAME,
             summary: DESCRIPTION,
+            // AGT-5: own pages link their Markdown twins (openvibe-shared 4.108.0); ## Optional is what an agent may skip.
+            markdown: true,
+            base: site,
             details: 'Every page is server-rendered and complete without JavaScript. A person signs in with OpenVibe.Network to define and manage their own watches; nobody else can see them.',
             sections: [
                 { title: 'Start here', links: [
@@ -67,10 +70,13 @@ function createDiscoveryRoutes({ config }) {
                     { title: 'How it checks', url: abs('/how-it-works'), note: 'The carrier order, the cadence floor and what each state means.' },
                 ] },
                 { title: 'For machines', links: [
-                    { title: 'Sitemap', url: abs('/sitemap.xml') },
                     { title: 'The watch API (for services)', url: abs('/how-it-works'), note: 'Bearer tokens, one capability per route; /api/v1/* stays loopback-only.' },
-                    { title: 'Release metadata (JSON)', url: abs('/release.json') },
                 ] },
+            ],
+            optional: [
+                { title: 'Sitemap', url: abs('/sitemap.xml') },
+                { title: 'Full text for language models', url: abs('/llms-full.txt') },
+                { title: 'Release metadata (JSON)', url: abs('/release.json') },
             ],
         }));
     });
