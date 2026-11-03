@@ -61,6 +61,25 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
 
 function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null, billing = null }) {
     const app = express();
+    // GET /openapi.json (SEO-3): this service's public API as OpenAPI 3.1, generated from the contracts
+    // (openvibe-contracts); the operations they mark internal-only are left out.
+    app.get('/openapi.json', (_req, res) => {
+        const doc = require('openvibe-contracts').openapi.document('watch');
+        if (!doc) return res.status(404).type('text/plain').send('No API document.');
+        const METHODS = new Set(['get', 'put', 'post', 'delete', 'patch', 'head', 'options']);
+        const paths = {};
+        for (const [p, item] of Object.entries(doc.paths || {})) {
+            const kept = {};
+            for (const [k, op] of Object.entries(item || {})) {
+                if (!METHODS.has(k)) { kept[k] = op; continue; }
+                const vis = [].concat((op && op['x-openvibe-visibility']) || []);
+                if (vis.length && vis.every((v) => v === 'internal')) continue;
+                kept[k] = op;
+            }
+            if (Object.keys(kept).some((k) => METHODS.has(k))) paths[p] = kept;
+        }
+        res.set('Cache-Control', 'public, max-age=3600').set('Access-Control-Allow-Origin', '*').json({ ...doc, paths });
+    });
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy != null ? config.trustProxy : 'loopback');
     const release = createRelease({ service: 'watch', root: path.join(__dirname, '..') });
