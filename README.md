@@ -203,9 +203,9 @@ product (`server/webhook-sources.js`, `server/carriers/webhook.js`).
 - **Signing.** `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the exact body with the secret>` (GitHub's form),
   `Authorization: Bearer <secret>` for a sender that cannot sign, or Telegram's `X-Telegram-Bot-Api-Secret-Token`
   (give the secret as `setWebhook`'s `secret_token`). Compared in constant time.
-- **A sender's own secret (agent plan A3).** Slack and Stripe sign with a secret they make. Paste it on the watch's
+- **A sender's own secret (agent plan A3).** Slack, Stripe and Discord sign with a secret or key they make. Paste it on the watch's
   page ("Signed by Slack or Stripe?") or send `POST /api/v1/watches/:id/webhook-secret` with
-  `{ "provider": "slack" | "stripe", "secret": "…" }`: that scheme then checks every delivery, and the secret is kept
+  `{ "provider": "slack" | "stripe" | "discord", "secret": "…" }`: that scheme then checks every delivery, and the secret is kept
   (never shown again) instead of Watch's own. A bad provider or secret answers 422 and changes nothing; a new secret of
   Watch's own (the same call with no body) replaces it.
   - `slack`: `X-Slack-Signature: v0=<hex HMAC-SHA256 of "v0:<X-Slack-Request-Timestamp>:<body>">`, the timestamp within
@@ -213,6 +213,11 @@ product (`server/webhook-sources.js`, `server/carriers/webhook.js`).
     acknowledged without checking twice.
   - `stripe`: `Stripe-Signature: t=<time>,v1=<hex HMAC-SHA256 of "<time>.<body>">` (any of several `v1`), the time
     within five minutes.
+  - `discord`: `X-Signature-Ed25519` over `X-Signature-Timestamp` + body, checked with the application's public key
+    (64 hex characters from the Developer Portal). Paste the address as the Interactions Endpoint URL. Discord wants
+    its reply within three seconds: its ping gets `{ "type": 1 }`, and any other interaction a quiet `{ "type": 4 }`
+    ("Got it") at once, with the check run right after on the interaction (`value_path: "data.name"` reads a slash
+    command's name). A bad signature answers 401, as Discord checks.
   - Cases: `test/webhook-providers.test.js`.
 - **What the extraction reads.** A JSON delivery is parsed and becomes the document (`value_path: "order.total"`); any
   other is read as text (`text`, `regex`). A delivery that says JSON but is not records `parse_error`.

@@ -19,6 +19,11 @@
  *                          challenge, and a retry (X-Slack-Retry-Num) is acknowledged without a second check.
  *                  stripe  Stripe-Signature: t=<time>,v1=<hex HMAC-SHA256(secret, time + "." + body)> (any v1 of
  *                          several), the time within 5 minutes.
+ *                  discord X-Signature-Ed25519 over X-Signature-Timestamp + body, checked with the application's
+ *                          public key (64 hex characters, from the Developer Portal; it is public, kept like a
+ *                          secret anyway). Discord wants an interaction reply within 3 seconds: a PING gets
+ *                          { type: 1 }, anything else { type: 4, ephemeral "Got it" } at once, and the check runs
+ *                          right after, with the interaction as its input.
  *   Answers        200 { state, triggered } after the check; 404 for an unknown id or a watch that is not a webhook
  *                  watch; 401 for a missing or wrong signature (the same answer either way); 409 for a paused watch;
  *                  429 over the watch's hourly budget (WATCH_WEBHOOK_MAX_PER_HOUR, default 60) with Retry-After;
@@ -32,6 +37,7 @@ const TOLERANCE_SEC = 300;
 const PROVIDERS = Object.freeze({
     slack: { name: 'Slack', secret: /^[0-9a-f]{32}$/, how: 'Slack signs each request with your app\'s signing secret (X-Slack-Signature, v0).' },
     stripe: { name: 'Stripe', secret: /^whsec_[A-Za-z0-9+/=_-]{16,200}$/, how: 'Stripe signs each event with the endpoint\'s signing secret (Stripe-Signature, v1).' },
+    discord: { name: 'Discord', secret: /^[0-9a-f]{64}$/, how: 'Discord signs each interaction with your application\'s key (X-Signature-Ed25519); paste its public key.' },
 });
 const MAX_BODY = 256 * 1024;
 
@@ -64,6 +70,20 @@ function stripeVerified(secret, raw, headers, nowMs) {
     return parts.filter(([k]) => k === 'v1').some(([, v]) => safeEqual(v || '', want));
 }
 
+// The DER prefix of an Ed25519 public key (SubjectPublicKeyInfo), so the 32 raw bytes Discord shows become a key object.
+const ED25519_SPKI = Buffer.from('302a300506032b6570032100', 'hex');
+
+/** Discord's interaction signing: Ed25519 over "<timestamp><body>" with the application's public key. */
+function discordVerified(publicKeyHex, raw, headers, nowMs) {
+    const ts = String(headers['x-signature-timestamp'] || '');
+    const sig = String(headers['x-signature-ed25519'] || '');
+    if (!fresh(ts, nowMs) || !/^[0-9a-f]{128}$/i.test(sig) || !/^[0-9a-f]{64}$/i.test(publicKeyHex)) return false;
+    try {
+        const key = crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI, Buffer.from(publicKeyHex, 'hex')]), format: 'der', type: 'spki' });
+        return crypto.verify(null, Buffer.concat([Buffer.from(ts), raw]), key, Buffer.from(sig, 'hex'));
+    } catch { return false; }
+}
+
 /**
  * Does the delivery carry the watch's secret? With a sender's own secret (`provider`), only that sender's scheme
  * counts; with Watch's own, a matching body signature, the secret as a bearer token, or Telegram's secret token.
@@ -72,6 +92,7 @@ function verified(secret, raw, headers, { provider = null, now = Date.now() } = 
     if (!secret) return false;
     if (provider === 'slack') return slackVerified(secret, raw, headers, now);
     if (provider === 'stripe') return stripeVerified(secret, raw, headers, now);
+    if (provider === 'discord') return discordVerified(secret, raw, headers, now);
     if (provider) return false;
     const tg = headers['x-telegram-bot-api-secret-token'];
     if (tg != null && safeEqual(String(tg), secret)) return true;
@@ -165,6 +186,20 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
             res.setHeader('Cache-Control', 'no-store');
             if (msg && msg.type === 'url_verification' && typeof msg.challenge === 'string') return res.json({ challenge: msg.challenge.slice(0, 200) });
             if (req.headers['x-slack-retry-num'] != null) return res.json({ watch_id: id, retry: true, state: null, triggered: false });
+        }
+        if (provider === 'discord') {
+            // Discord wants its reply within three seconds and in its own shape, so the reply goes first and the check
+            // runs right after, with the interaction as its input.
+            let msg = null;
+            try { msg = JSON.parse(raw.toString('utf8')); } catch { /* not an interaction */ }
+            res.setHeader('Cache-Control', 'no-store');
+            if (msg && msg.type === 1) return res.json({ type: 1 });
+            if (row.status !== 'active') return res.json({ type: 4, data: { content: `This watch is ${row.status}.`, flags: 64 } });
+            if (!underBudget(id)) return res.json({ type: 4, data: { content: 'Too many at once: try again in a while.', flags: 64 } });
+            res.json({ type: 4, data: { content: 'Got it: the watch is checking.', flags: 64 } });
+            check.run(id, { trigger: 'webhook', input: { body: raw, content_type: 'application/json' } })
+                .catch((err) => log.error(`[webhook-sources] ${id}: ${err.message}`));
+            return undefined;
         }
         if (row.status !== 'active') return problem(res, 409, 'watch.disabled', `the watch is ${row.status}`);
         if (!underBudget(id)) return problem(res, 429, 'watch.rate_limited', `at most ${maxPerHour} deliveries an hour wake one watch`, { 'Retry-After': String(retryAfter()) });

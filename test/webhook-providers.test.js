@@ -42,7 +42,7 @@ t('the helper: Slack v0, Stripe v1 (any of several), each in time; Telegram with
     assert.strictEqual(verified('whk_x', body, { 'x-telegram-bot-api-secret-token': 'whk_x' }), true, 'Telegram\'s secret_token');
     assert.strictEqual(verified('whk_x', body, { 'x-telegram-bot-api-secret-token': 'whk_y' }), false);
     assert.strictEqual(verified(SLACK, body, slack, { provider: 'github' }), false, 'an unknown provider checks nothing');
-    assert.deepStrictEqual(Object.keys(PROVIDERS), ['slack', 'stripe']);
+    assert.deepStrictEqual(Object.keys(PROVIDERS), ['slack', 'stripe', 'discord']);
 });
 
 t('the owner pastes Slack\'s signing secret; it is kept, never echoed; a bad one changes nothing', async () => {
@@ -91,6 +91,30 @@ t('Stripe: a signed event runs the check; the wrong secret is refused', async ()
     const ok = await deliver(stripeWatch.id, body, { 'Stripe-Signature': `t=${ts},v1=${hmac(STRIPE, `${ts}.${body}`)}` });
     assert.deepStrictEqual(await ok.json(), { watch_id: stripeWatch.id, state: 'condition_met', triggered: true });
     assert.strictEqual((await deliver(stripeWatch.id, body, { 'Stripe-Signature': `t=${ts},v1=${hmac('whsec_other', `${ts}.${body}`)}` })).status, 401);
+});
+
+t('Discord: the ping gets { type: 1 }, a command a quiet reply at once and a check right after; a bad signature 401', async () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const pub = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex');
+    const made = await api('POST', '/api/v1/watches', { token: ME, body: { ...def('discord commands'), extraction: { kind: 'json', value_path: 'data.name' }, condition: { op: 'contains', value: 'deploy' } } });
+    const w = made.body.watch;
+    assert.strictEqual((await api('POST', `/api/v1/watches/${w.id}/webhook-secret`, { token: ME, body: { provider: 'discord', secret: 'not-a-key' } })).status, 422);
+    const set = await api('POST', `/api/v1/watches/${w.id}/webhook-secret`, { token: ME, body: { provider: 'discord', secret: pub } });
+    assert.strictEqual(set.body.webhook.provider, 'discord');
+    const sign = (body, ts = String(nowSec())) => ({ 'X-Signature-Timestamp': ts, 'X-Signature-Ed25519': crypto.sign(null, Buffer.concat([Buffer.from(ts), Buffer.from(body)]), privateKey).toString('hex') });
+    const ping = JSON.stringify({ type: 1, id: 'i1' });
+    const p = await deliver(w.id, ping, sign(ping));
+    assert.deepStrictEqual(await p.json(), { type: 1 });
+    assert.strictEqual((await deliver(w.id, ping, { ...sign(ping), 'X-Signature-Ed25519': '0'.repeat(128) })).status, 401, 'Discord checks that a bad signature is refused');
+    assert.strictEqual((await deliver(w.id, ping, sign(ping, String(nowSec() - 600)))).status, 401, 'an old one too');
+    const cmd = JSON.stringify({ type: 2, id: 'i2', data: { name: 'deploy' } });
+    const c = await deliver(w.id, cmd, sign(cmd));
+    const reply = await c.json();
+    assert.deepStrictEqual([reply.type, reply.data.flags], [4, 64], 'an ephemeral reply at once');
+    let got = [];
+    for (let i = 0; i < 50 && !got.length; i++) { got = await runs(w.id); if (!got.length) await new Promise((r) => setTimeout(r, 50)); }
+    assert.strictEqual(got.length, 1, 'the check ran right after');
+    assert.strictEqual(got[0].trigger, 'webhook');
 });
 
 t('a new secret of Watch\'s own replaces a provider\'s, and its forms work again', async () => {
