@@ -548,6 +548,11 @@ t('discovery files describe the site and keep the person pages out of the sitema
     const llms = await svc.get('/llms.txt');
     assert.strictEqual(llms.status, 200);
     assert.match(llms.text, /OpenVibe\.Watch/);
+    // AGT-5: own pages at their Markdown twins, files as they are, ## Optional last.
+    assert.match(llms.text, /\(https?:\/\/[^)]*\/index\.md\)/);
+    assert.match(llms.text, /\(https?:\/\/[^)]*\/how-it-works\.md\)/);
+    assert.match(llms.text, /\(https?:\/\/[^)]*\/sitemap\.xml\)/);
+    assert.ok(llms.text.includes('\n## Optional\n') && llms.text.lastIndexOf('\n## ') === llms.text.indexOf('\n## Optional\n'), 'Optional is last');
 });
 
 t('the webhook template: no address to give, the address and secret shown once, a new secret, deliveries, edit', async () => {
