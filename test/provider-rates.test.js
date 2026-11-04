@@ -220,7 +220,7 @@ t('a changed price raises exactly one Watch change with both integer values, and
     assert.strictEqual(approvedEvents[0].envelope.payload.decided_by, person.sub);
 
     // There is no rate-card table in Watch, and no route wrote a billable price.
-    const tables = await svc.db.many("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE '%rate%'");
+    const tables = await svc.db.many("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name LIKE '%rate%'");
     assert.deepStrictEqual(tables.map((r) => r.table_name).sort(), ['provider_rate_changes', 'provider_rate_fetches', 'provider_rate_observations', 'provider_rate_sources']);
 });
 
