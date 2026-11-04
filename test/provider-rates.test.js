@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { boot, request, serviceToken, userToken, newUser, site, suite } = require('./helpers');
 const { parse, scaled, PROVIDERS } = require('../server/provider-rates');
+const { validate } = require('openvibe-contracts');
 
 const t = suite('provider-rates');
 const fixture = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'provider-rates', name), 'utf8'));
@@ -194,6 +195,9 @@ t('a changed price raises exactly one Watch change with both integer values, and
     assert.strictEqual(events.length, 1);
     assert.strictEqual(events[0].envelope.payload.change_id, change.id);
     assert.strictEqual(events[0].envelope.payload.approval_required, true);
+    // The released contract (openvibe-contracts v0.286.0) describes exactly what Watch sends.
+    const changedCheck = validate('watch.rate.changed@1', events[0].envelope.payload);
+    assert.ok(changedCheck.valid, JSON.stringify(changedCheck.errors));
 
     // A service may fetch and read, never approve.
     const service = await request(svc.base, 'POST', `/api/v1/provider-rates/changes/${change.id}/approve`, { token: admin() });
@@ -218,6 +222,8 @@ t('a changed price raises exactly one Watch change with both integer values, and
     assert.strictEqual(approvedEvents.length, 1);
     assert.strictEqual(approvedEvents[0].envelope.payload.applied, false);
     assert.strictEqual(approvedEvents[0].envelope.payload.decided_by, person.sub);
+    const approvedCheck = validate('watch.rate.approved@1', approvedEvents[0].envelope.payload);
+    assert.ok(approvedCheck.valid, JSON.stringify(approvedCheck.errors));
 
     // There is no rate-card table in Watch, and no route wrote a billable price.
     const tables = await svc.db.many("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name LIKE '%rate%'");
