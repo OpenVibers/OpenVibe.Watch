@@ -79,7 +79,7 @@ async function boot({ env = {}, worker = 'off', lookupImpl, now, log = silent, l
     });
     // One database per boot (PGlite, or WATCH_TEST_STORE=pg: the containers), dropped when the boot stops.
     const testdb = await require('./db').testDb();
-    const h = await start({ config, db: testdb.db, log, lookupImpl, limitsNow, accountSend, ...(notifications ? { notifications } : {}), ...(post ? { post } : {}), ...(actor ? { actor } : {}), ...(run ? { run } : {}), ...(codes ? { codes } : {}), ...(projects ? { projects } : {}), ...(machines ? { machines } : {}), ...(projectSecrets ? { projectSecrets } : {}), ...(providerRateProviders ? { providerRateProviders } : {}), ...(now ? { now } : {}) });
+    const h = await start({ config, env, db: testdb.db, log, lookupImpl, limitsNow, accountSend, ...(notifications ? { notifications } : {}), ...(post ? { post } : {}), ...(actor ? { actor } : {}), ...(run ? { run } : {}), ...(codes ? { codes } : {}), ...(projects ? { projects } : {}), ...(machines ? { machines } : {}), ...(projectSecrets ? { projectSecrets } : {}), ...(providerRateProviders ? { providerRateProviders } : {}), ...(now ? { now } : {}) });
     const base = `http://127.0.0.1:${h.server.address().port}`;
 
     /** A session cookie for a person, as /auth/callback would have set it. */

@@ -27,6 +27,12 @@ const STATES = ['pending', 'approved', 'rejected'];
 
 function providerRatesRouter({ providerRates, auth, limits }) {
     const router = express.Router();
+    // Owner settings (D11): the module is always constructed now, so the switch is read live. Off, its routes are
+    // the API's ordinary 404 and no source row is written; the first enabled request seeds the two sources.
+    router.use(async (req, res, next) => {
+        if (!providerRates.enabled) return next('router');
+        try { await providerRates.init(); next(); } catch (err) { next(err); }
+    });
     const read = [auth.requireCap(CAPS.read), limits.reads('watch.read')];
     const manage = [auth.requireCap(CAPS.manage), limits.budget('watch.write')];
     const runNow = [auth.requireCap(CAPS.run), limits.budget('watch.check.run')];

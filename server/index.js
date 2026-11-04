@@ -46,7 +46,7 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null, projectSecrets: givenProjectSecrets = null, providerRateProviders = null } = {}) {
+async function start({ config, env = process.env, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null, projectSecrets: givenProjectSecrets = null, providerRateProviders = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -98,10 +98,10 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const scheduler = createScheduler({ db, check, config, now, log });
     // Provider-rate evidence (plan P6): created only behind WATCH_PROVIDER_RATES; the rows are seeded disabled and a
     // person enables a source after reading its terms. The flag alone never fetches anything.
-    const providerRates = config.providerRates && config.providerRates.enabled
-        ? createProviderRates({ db, config, fetcher, spacer, outbox, now, log, ...(providerRateProviders ? { providers: providerRateProviders } : {}) })
-        : null;
-    if (providerRates) await providerRates.init();
+    // D11 owner settings: always constructed so the store's switch applies live; off, it seeds nothing until an
+    // enabled request (server/api/provider-rates.js) or an owner change (onConfigActivate below) needs it.
+    const providerRates = createProviderRates({ db, config, fetcher, spacer, outbox, now, log, ...(providerRateProviders ? { providers: providerRateProviders } : {}) });
+    if (providerRates.enabled) await providerRates.init();
     // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.
     const eventSources = createEventSources({ db, check, config, fetchImpl, log, now });
     registry.onEventSourceChange(() => eventSources.kick());
@@ -119,7 +119,13 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const accountSend = givenSend || (config.oauth.clientSecret
         ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
         : null);
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources, billing, providerRates });
+    const app = await createApp({ config, env, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources, billing, providerRates,
+        onConfigActivate: async (values) => {
+            if (!providerRates) return;
+            if (!values.enabled) return providerRates.stop();
+            await providerRates.init();
+            if (config.worker.enabled) providerRates.start();
+        } });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();

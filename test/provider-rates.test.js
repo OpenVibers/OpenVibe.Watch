@@ -259,7 +259,8 @@ t('with the flag off the routes are absent and nothing is fetched or seeded', as
     await stub.close();
     const off = await boot({ env: {} });
     try {
-        assert.strictEqual(off.providerRates, null);
+        assert.strictEqual(off.config.providerRates.enabled, false, 'the module exists so the owner switch can turn it on live; off, it is inert');
+        assert.strictEqual(off.providerRates.enabled, false);
         const got = await request(off.base, 'GET', '/api/v1/provider-rates', { token: reader() });
         assert.strictEqual(got.status, 404);
         assert.strictEqual(got.body.code, 'watch.not_found');

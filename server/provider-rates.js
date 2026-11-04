@@ -258,7 +258,7 @@ function retryAfterMs(value, at) {
 
 function createProviderRates({ db, config, fetcher, spacer = null, outbox = null, now = () => Date.now(), log = console, ids = contractIds, providers = PROVIDERS }) {
     const settings = (config && config.providerRates) || {};
-    const enabled = Boolean(settings.enabled);
+    const enabledNow = () => Boolean(settings.enabled);
     const maxBytes = Number.isSafeInteger(settings.maxBytes) && settings.maxBytes > 0 ? settings.maxBytes : 8 * 1024 * 1024;
     const pollSec = Number.isSafeInteger(settings.pollIntervalSec) && settings.pollIntervalSec > 0 ? settings.pollIntervalSec : 6 * 3600;
     const staleSec = Number.isSafeInteger(settings.staleAfterSec) && settings.staleAfterSec > 0 ? settings.staleAfterSec : 2 * pollSec;
@@ -301,8 +301,10 @@ function createProviderRates({ db, config, fetcher, spacer = null, outbox = null
         pendingCount: db.prepare("SELECT COUNT(*) AS n FROM provider_rate_changes WHERE state = 'pending'"),
     };
 
-    /** The first boot writes the two sources disabled; an existing row is never overwritten (a person may have notes). */
+    /** The first enabled boot writes the two sources disabled; an existing row is never overwritten (a person may have notes). */
+    let initDone = false;
     async function init() {
+        if (initDone) return;
         const at = now();
         for (const def of Object.values(providers)) {
             await st.seed.run({
@@ -311,6 +313,7 @@ function createProviderRates({ db, config, fetcher, spacer = null, outbox = null
                 parser_version: def.parser_version, poll_interval_sec: pollSec, stale_after_sec: staleSec, at,
             });
         }
+        initDone = true;
     }
 
     const sourceRow = (key) => st.source.get(String(key || ''));
@@ -554,7 +557,7 @@ function createProviderRates({ db, config, fetcher, spacer = null, outbox = null
 
     /** One scheduler tick: fetch every enabled source whose turn has come. */
     async function tick() {
-        if (!enabled || !fetcher) return [];
+        if (!enabledNow() || !fetcher) return [];
         const due = await st.due.all({ now: now(), limit: 4 });
         for (const row of due) {
             fetchSource(row.key, { trigger: 'schedule' }).catch((err) => log.error(`[provider-rates] ${row.key}: ${err.stack || err}`));
@@ -563,7 +566,7 @@ function createProviderRates({ db, config, fetcher, spacer = null, outbox = null
     }
 
     function start() {
-        if (!enabled || timer) return;
+        if (!enabledNow() || timer) return;
         timer = setInterval(async () => { try { await tick(); } catch (err) { log.error(`[provider-rates] tick: ${err.message}`); } }, tickMs);
         timer.unref?.();
     }
@@ -655,7 +658,7 @@ function createProviderRates({ db, config, fetcher, spacer = null, outbox = null
 
     return {
         kind: KIND,
-        enabled,
+        get enabled() { return enabledNow(); },
         providers,
         init, tick, start, stop,
         sources, source: sourceRow, sourceView, health,
