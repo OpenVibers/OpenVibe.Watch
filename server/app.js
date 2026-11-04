@@ -24,6 +24,7 @@ const { watchesRouter } = require('./api/watches');
 const { resourceIndexRouter } = require('./api/resource-index');
 const { resourceControlRouter } = require('./api/resource-control');
 const { checksRouter } = require('./api/checks');
+const { providerRatesRouter } = require('./api/provider-rates');
 const { createActorLimits } = require('./api/actor-limits');
 const { assetVersion, send, setRelease, SITE_NAME, TAGLINE } = require('./render/layout');
 const { html } = require('./render/html');
@@ -59,7 +60,7 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
     + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null, billing = null }) {
+function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null, billing = null, providerRates = null }) {
     const app = express();
     // GET /openapi.json (SEO-3): this service's public API as OpenAPI 3.1, generated from the contracts
     // (openvibe-contracts); the operations they mark internal-only are left out.
@@ -170,6 +171,9 @@ function createApp({ config, db, registry, check, observations, scheduler, auth,
     app.use(resourceControlRouter({ db, auth, registry, now }));
     app.use(watchesRouter({ registry, auth, limits, webhookSources }));
     app.use(checksRouter({ registry, check, observations, auth, limits }));
+    // Provider-rate evidence (plan P6, server/api/provider-rates.js): mounted only with WATCH_PROVIDER_RATES=1. With
+    // the flag off every path below is the API's ordinary 404 and no timer exists.
+    if (providerRates) app.use(providerRatesRouter({ providerRates, auth, limits }));
     app.use('/api', (req, res) => http.sendProblem(res, 404, 'watch.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
 
     // ── Pages ───────────────────────────────────────────────────────────────────────────────

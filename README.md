@@ -245,6 +245,71 @@ product (`server/webhook-sources.js`, `server/carriers/webhook.js`).
   previous check still runs.
 - **Check now** on a webhook watch answers 422 `watch.webhook_awaited`: there is no delivery to read.
 
+## Provider-rate evidence (`WATCH_PROVIDER_RATES`, off)
+
+PLAN P6 gives Watch/Sources the permitted, provenance-backed market data and observed rate changes; the supply
+rate card itself stays with OpenVibe.AI. This is that observation feed, behind `WATCH_PROVIDER_RATES=1` (off by
+default): two official, machine-readable provider price documents become supply rate observations, a difference
+raises a change, and a person approves it. **The approval is evidence; nothing here is billable and no rate card is
+written.** AI's catalog operator applies an approved change to the supply rate card through AI's own path.
+
+**Why Watch and not Sources.** Sources' own README scopes it to the material the publication products ingest and
+publish ("Products read items with provenance and decide — under their own review and indexability rules — what, if
+anything, to publish"), and `sources.source@1`'s `type` is a released enum. A provider price that may become a
+billable supply rate is not publication content; the observation, the change, the condition and the human decision
+are Watch's model, and PLAN B assigns observed rate/model changes to Watch/Sources jointly. So the source kind
+(`provider-rate`) lives here, and the one ingestion registry stays Sources for product content.
+
+**The two providers** (both in OpenVibe.AI `docs/provider-matrix.md`, both keyless and JSON — no page is scraped):
+
+| Source kind | Provider | Official document | Access in the matrix |
+|---|---|---|---|
+| `provider-rate` | DeepInfra | `https://api.deepinfra.com/models/list` (documented in its OpenAPI) | `RESTRICTED` for resale; evidence only |
+| `provider-rate` | Featherless AI | `https://api.featherless.ai/v1/models` (OpenAI-compatible) | `AUTHORIZED_WHOLESALE` (Scale only); terms §3 permit resale, subject to an agreement |
+
+They are the first two because they publish a price per model in a document a program can read without an account
+or an HTML parse, and they bracket the matrix: Featherless is the one provider whose terms permit resale, so its
+supply price is the one the exchange will most want to know; DeepInfra is an existing OpenAI-compatible adapter
+target with an exact keyless list. Each source's row records its terms and robots notes; **it starts disabled**, and a
+person enables it after reading them even when the flag is on.
+
+**What an observation is** ([server/provider-rates.js](server/provider-rates.js), migration
+`0018_provider_rates.sql`): `provider`, `model`, `token_class` (`input`, `output`, and `cached_read` where the
+document states it), `nano_usd_per_m` as an **integer string** (D1: never a float), `currency`, `region`, the
+`effective_date` (the first day the value was observed; an unchanged value keeps its date, so the rows show effective
+periods), `source_url` (the URL actually fetched) and `fetched_at`.
+
+- **Units.** DeepInfra states cents per token: `× 1e13` is nano-USD per million. Its `rate_per_input_token_cached`
+  is a multiplier (the pricing page renders input × it), not a price, and `discount` is applied while active
+  (`price × (1 − discount)`). Cache-write is not recorded: the document states it only as a retention-dependent
+  multiplier (5m/1h), so no single cache_write rate is invented.
+  Featherless states USD per token as decimal strings: `× 1e15` is nano-USD per million; its per-million display
+  numbers are a fallback only. `region` is `global`: neither document scopes its price by region, so no region is invented.
+- **Changes.** A successful parse writes one immutable observation per `(model, token_class)` and updates the
+  source's validators. When the value (or currency/region) differs from the last observation, the same transaction
+  writes a `provider_rate_changes` row in state `pending` and a `watch.rate.changed` event with
+  `approval_required: true`. An unchanged value is not written again (its first observation already records it and
+  keeps the effective date); the fetch row's `stated` and `observations` counts say what the document said versus what
+  was new, and no change is raised. A new model is recorded but raises no change (there is no previous value to differ
+  from).
+- **Failures.** A malformed document (invalid JSON, a price that is not a finite non-negative decimal, no priced
+  model) records a `parse_error` fetch and **no observation at all** — a missing price is never zero. A 304 is
+  `not_modified`; an HTTP error is `http_error`/`rate_limited`; stale means the last success is older than
+  `stale_after_sec`. The health (`healthy | stale | failing | never_fetched | disabled`) is computed, never guessed,
+  and the last good observations stay visible with their labels.
+- **Approval.** `POST /api/v1/provider-rates/changes/:id/approve` (or `/reject`) requires a **person** (`usr_…`),
+  not a service or an agent, and records who and when; the answer says `applied: false` and the change's `effect` is
+  `evidence`. A second decision is `409`. A `watch.rate.approved`/`watch.rate.rejected` event carries the decision,
+  so AI's operator can apply it, but Watch itself has no rate-card table and no writer for one.
+
+API (mounted only with the flag on; `watch.watch.read` to read, `watch.watch.manage` to enable/approve,
+`watch.check.run` to refresh): `GET /api/v1/provider-rates`, `GET .../sources[/:key]`,
+`GET .../observations?latest=1&source=&model=&token_class=`, `GET .../changes[?state=pending]`,
+`GET .../changes/:id`, `PATCH .../sources/:key` `{enabled}`, `POST .../sources/:key/refresh`,
+`POST .../changes/:id/approve|reject` `{note?}`. The worker fetches enabled sources on
+`WATCH_PROVIDER_RATES_TICK_MS` (60 s) every `poll_interval_sec` (6 h); with the flag off the module is not created,
+no route exists and nothing is seeded.
+
 ## A check
 
 An in-process scheduler ([server/scheduler.js](server/scheduler.js)) starts checks for active
@@ -364,6 +429,13 @@ signed-in site holds (`aud: openvibe.network`); a watch is theirs, owned by the 
 | `watch.resource.read` | `GET /api/v1/resources?project=&kind=&cursor=&limit=`, `GET /api/v1/resources/:ovrn` (first-party service token only) |
 | `watch.resource.control` | `POST /api/v1/resources/control` (first-party service token only; ADR-048, [server/api/resource-control.js](server/api/resource-control.js)): a `common.resource-control-request@1` for a watch from OpenVibe.Services acting for its owner (`on_behalf_of`) — `suspend` (pause), `resume`, `delete`; other actions refused `control.unsupported_action`; only the owner's watch in the OVRN's project (otherwise `resources.unknown_resource`); `dry_run` applies nothing; the first answer per (caller, project, `idempotency_key`) is kept (`watch_control_log`, migration 0009) and a key reused for another request is 409. Loopback only: the public vhost 404s `/api/v1/resources*`. |
 
+Provider-rate evidence (`WATCH_PROVIDER_RATES=1` only; off by default) adds
+`GET /api/v1/provider-rates`, `.../sources[/:key]`, `.../observations`,
+`.../changes[?state=]` and `.../changes/:id` on `watch.watch.read`;
+`PATCH .../sources/:key` and `POST .../changes/:id/approve|reject` on `watch.watch.manage`; and
+`POST .../sources/:key/refresh` on `watch.check.run`. Approve and reject require a person (`usr_…`)
+and answer `applied: false`; no route writes a rate card. With the flag off none of these paths exists.
+
 The loopback-only authority index lists non-deleted `watch.watch` resources as
 `common.resource-list-result@1`. It orders watches by id, pages with an opaque cursor, and
 includes an OVRN only for a watch with a valid project id.
@@ -475,6 +547,9 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
 - checks: `check_runs`, `observations`, the scheduler, conditional-fetch state, backoff
 - the public site's sign-in sessions (`web_sessions`) and its pages
 - `watch.*` events
+- provider-rate evidence (plan P6, `WATCH_PROVIDER_RATES` off): the DeepInfra and Featherless official price
+  documents as immutable observations, the pending change when a rate differs, and a person's dated approval —
+  never a rate card
 
 ## Does not own
 
@@ -484,6 +559,8 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
   step 7) — Watch asks them, they run
 - interpreting a trigger and acting on it (OpenVibe.Actor, OpenVibe.Codes, actions = step 4)
 - delivery of a notification (OpenVibe.Network consumes `watch.watch.triggered`)
+- the supply rate card (OpenVibe.AI's catalog): an approved provider-rate change is evidence AI's operator applies
+  through AI's own path, so Watch is never a second authority for a billable price
 
 ## Depends on
 
