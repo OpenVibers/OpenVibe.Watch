@@ -102,11 +102,23 @@ t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () =
     assert.strictEqual(sanitizeNext('https://openvibe.watch/watches/w1?tab=runs', cfg), '/watches/w1?tab=runs');
     for (const v of ['https://evil.com/x', 'https://openvibe.watch.evil.com/x', 'https://openvibe.watch//evil.com', 'http://openvibe.watch/x']) assert.strictEqual(sanitizeNext(v, cfg), '/', v);
 
-    // The state must match the browser that started: a callback with the wrong state is refused.
+    // A state that does not match never sets a session: the SDK's recovery starts a fresh sign-in once, then shows
+    // the page with "Try again" (it does not loop).
     const started = await svc.get('/auth/login?next=%2Fwatches');
     const flow = started.headers.getSetCookie().map((c) => c.split(';')[0]).find((c) => c.startsWith('watch_oauth='));
     const bad = await svc.get('/auth/callback?code=code_x&state=not-the-state', { cookie: flow });
-    assert.strictEqual(bad.status, 400);
+    assert.strictEqual(bad.status, 302);
+    assert.match(bad.headers.get('location'), /^\/auth\/login/);
+    const retry = bad.headers.getSetCookie().map((c) => c.split(';')[0]).find((c) => c.startsWith('ov_oauth_retry='));
+    assert.ok(retry, 'the recovery cookie');
+    const badAgain = await svc.get('/auth/callback?code=code_x&state=not-the-state', { cookie: retry });
+    assert.strictEqual(badAgain.status, 400);
+    assert.match(badAgain.text, /Try again/);
+
+    // GET /auth/health: the Network accepts this client (a code that never existed is invalid_grant, not invalid_client).
+    const health = await svc.get('/auth/health');
+    assert.strictEqual(health.status, 200);
+    assert.deepStrictEqual(health.json(), { ok: true, client: 'ok' });
 });
 
 t('a person signs in for the rest of the tests', async () => {

@@ -79,7 +79,11 @@ async function startNetwork({ privateKey, issuer = 'https://openvibe.network', c
         }
         if (url.pathname === '/oauth/revoke') return json(200, {});
         if (url.pathname === '/oauth/token' && req.method === 'POST') {
-            const body = Object.fromEntries(new URLSearchParams(raw.toString('utf8')));
+            // The Network takes the token grant as JSON (openvibe-sdk/sso) or as a form (older clients).
+            const text = raw.toString('utf8');
+            const body = text.trim().startsWith('{')
+                ? JSON.parse(text)
+                : Object.fromEntries(new URLSearchParams(text));
             if (body.client_id !== clientId || body.client_secret !== clientSecret) return problem(json, 401, 'invalid_client', 'bad client credentials');
             if (body.grant_type !== 'authorization_code') return problem(json, 400, 'unsupported_grant_type', body.grant_type);
             const c = st.codes.get(body.code);

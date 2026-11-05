@@ -14,17 +14,23 @@
  * the callback, and discarded: the site acts on the watch registry in-process as the person's
  * canonical subject (usr_…), never as the person over Network's API.
  *
- * The OAuth half rides openvibe-sdk/auth's own helpers (startAuthorization / readCallback /
- * exchangeCode), so the PKCE, state and token-endpoint rules are the SDK's, not a hand copy.
+ * The OAuth half is openvibe-sdk/sso's: the authorize URL, the code exchange and GET /auth/health
+ * are the SDK's (createSsoClient), not a hand copy. The site keeps its database session, because the
+ * browser must never hold a Network token. A lost or expired flow starts the sign-in once more by
+ * itself (a two-minute ov_oauth_retry cookie, never a loop); when it cannot, the visitor gets a page
+ * with "Try again" instead of a bare line of text.
  */
+const crypto = require('crypto');
 const express = require('express');
-const sdk = require('openvibe-sdk/auth');
+const { createSsoClient, failurePage } = require('openvibe-sdk/sso');
 const cache = require('openvibe-shared/cache-policy');
 
 const SESSION_COOKIE = 'watch_session';
 const FLOW_COOKIE = 'watch_oauth';
 const HINT_COOKIE = 'ov_sso_hint';
+const RETRY_COOKIE = 'ov_oauth_retry';
 const FLOW_TTL_MS = 10 * 60 * 1000;
+const RETRY_TTL_MS = 2 * 60 * 1000;
 
 /** This site's own origin (BASE_URL). */
 function ownOrigins(config) {
@@ -68,8 +74,32 @@ function parseCookies(header) {
     return out;
 }
 
+/** Compare two strings in constant time (the state must match the browser that started the flow). */
+function sameString(a, b) {
+    const x = Buffer.from(String(a || ''));
+    const y = Buffer.from(String(b || ''));
+    return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
+}
+
 function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console }) {
     const cookieBase = () => ({ sameSite: 'lax', secure: config.cookies.secure, httpOnly: true, path: '/' });
+    const sdkSso = createSsoClient({
+        site: 'watch',
+        siteName: 'OpenVibe.Watch',
+        baseUrl: config.baseUrl,
+        clientId: config.oauth.clientId,
+        clientSecret: config.oauth.clientSecret,
+        networkUrl: config.networkUrl,
+        networkInternalUrl: config.networkInternalUrl,
+        issuer: config.networkIssuer,
+        redirectUri: config.oauth.redirectUri,
+        scope: config.oauth.scope,
+        audience: config.oauth.sessionAudience,
+        jwks: config.jwksUrl,
+        secureCookies: config.cookies.secure,
+        fetch: fetchImpl,
+        log,
+    });
 
     function setSessionCookie(res, token) {
         res.cookie(SESSION_COOKIE, token, { ...cookieBase(), maxAge: sessions.DEFAULT_TTL_MS });
@@ -115,17 +145,28 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
     function routes() {
         const r = express.Router();
         const flowCookie = () => ({ ...cookieBase(), path: '/auth', maxAge: FLOW_TTL_MS });
+        const retryCookie = () => ({ ...cookieBase(), path: '/auth', maxAge: RETRY_TTL_MS });
 
-        r.get('/login', async (req, res) => {
+        /** A sign-in that cannot finish starts once more by itself; the second time it shows the page. */
+        function retryOrExplain(req, res, target, { status = 400, title, text }) {
+            if (parseCookies(req.headers.cookie)[RETRY_COOKIE] !== '1') {
+                res.cookie(RETRY_COOKIE, '1', retryCookie());
+                return res.redirect(`/auth/login${target && target !== '/' ? `?next=${encodeURIComponent(target)}` : ''}`);
+            }
+            res.clearCookie(RETRY_COOKIE, { ...cookieBase(), path: '/auth' });
+            return res.status(status).type('html').send(failurePage({
+                siteName: 'OpenVibe.Watch',
+                title,
+                text,
+                retryHref: `/auth/login${target && target !== '/' ? `?next=${encodeURIComponent(target)}` : ''}`,
+                backHref: target || '/',
+            }));
+        }
+
+        r.get('/login', (req, res) => {
             const next = sanitizeNext(req.query.next, config);
-            const started = await sdk.startAuthorization({
-                network: config.networkUrl,
-                clientId: config.oauth.clientId,
-                redirectUri: config.oauth.redirectUri,
-                scope: config.oauth.scope,
-                state: sdk.createState(),
-            });
-            res.cookie(FLOW_COOKIE, JSON.stringify({ state: started.state, verifier: started.codeVerifier, next }), flowCookie());
+            const started = sdkSso.authorizeUrl();
+            res.cookie(FLOW_COOKIE, JSON.stringify({ state: started.state, verifier: started.verifier, next }), flowCookie());
             res.set('Cache-Control', cache.htmlHeaders({ private: true }));
             return res.redirect(started.url);
         });
@@ -136,36 +177,64 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             try { flow = JSON.parse(req.cookies[FLOW_COOKIE] || 'null'); } catch { flow = null; }
             res.clearCookie(FLOW_COOKIE, { ...cookieBase(), path: '/auth' });
             const next = flow ? sanitizeNext(flow.next, config) : '/';
-            const query = new URLSearchParams();
-            for (const [k, v] of Object.entries(req.query)) query.set(k, String(v));
-            let code;
-            try {
-                ({ code } = sdk.readCallback(`/auth/callback?${query.toString()}`, { expectedState: flow && flow.state }));
-            } catch (err) {
-                return res.status(400).type('text/plain').send('Sign-in was not completed. Please try again.');
-            }
-            if (!flow || typeof flow.verifier !== 'string') {
-                return res.status(400).type('text/plain').send('Sign-in was not started in this browser. Please try again.');
-            }
-            let token;
-            try {
-                const data = await sdk.exchangeCode({
-                    code,
-                    redirectUri: config.oauth.redirectUri,
-                    codeVerifier: flow.verifier,
-                    clientId: config.oauth.clientId,
-                    clientSecret: config.oauth.clientSecret || undefined,
-                    tokenUrl: `${config.networkInternalUrl}/oauth/token`,
-                    network: config.networkUrl,
-                    fetch: fetchImpl,
+            if (req.query.error) {
+                res.clearCookie(RETRY_COOKIE, { ...cookieBase(), path: '/auth' });
+                log.warn(`[sso] sign-in not completed: ${String(req.query.error).slice(0, 120)}`);
+                return retryOrExplain(req, res, next, {
+                    title: 'Sign-in didn\'t finish',
+                    text: `OpenVibe.Network did not complete the sign-in (${String(req.query.error).slice(0, 60)}). Try again; your account is fine.`,
                 });
-                token = data.access_token;
+            }
+            if (!flow || typeof flow.state !== 'string' || typeof flow.verifier !== 'string'
+                || typeof req.query.code !== 'string' || !sameString(req.query.state, flow.state)) {
+                return retryOrExplain(req, res, next, {
+                    title: 'Sign-in didn\'t finish',
+                    text: 'It took too long, or it started in another tab or app. Start it again and it will go through; your account is fine.',
+                });
+            }
+            let data;
+            try {
+                data = await sdkSso.tokenGrant({
+                    grant_type: 'authorization_code',
+                    redirect_uri: config.oauth.redirectUri,
+                    code: req.query.code,
+                    code_verifier: flow.verifier,
+                });
             } catch (err) {
-                log.warn(`[sso] code exchange failed: ${(err && err.code) || (err && err.status) || err}`);
-                return res.status(502).type('text/plain').send('Sign-in failed: OpenVibe.Network did not accept the sign-in code. Please try again.');
+                const error = (err && (err.error || err.code)) || '';
+                if (error === 'invalid_client' || error === 'unauthorized_client' || (err && err.status === 401)) {
+                    log.error(`[sso] the Network refuses this site's OAuth client (${error || err.status}): check OV_OAUTH_CLIENT_ID / OV_OAUTH_CLIENT_SECRET`);
+                    return res.status(500).type('html').send(failurePage({
+                        siteName: 'OpenVibe.Watch',
+                        title: 'Sign-in isn\'t working on OpenVibe.Watch right now',
+                        text: 'This is a problem on our side, not with your account, and it has been logged. Please try again a little later.',
+                        retryHref: `/auth/login${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`,
+                        backHref: next || '/',
+                    }));
+                }
+                log.warn(`[sso] code exchange failed: ${(err && (err.message || err.status)) || err}`);
+                if (err && err.status && err.status < 500) {
+                    return retryOrExplain(req, res, next, {
+                        title: 'Sign-in didn\'t finish',
+                        text: 'It took too long, or it started in another tab or app. Start it again and it will go through; your account is fine.',
+                    });
+                }
+                return res.status(502).type('html').send(failurePage({
+                    siteName: 'OpenVibe.Watch',
+                    title: 'OpenVibe.Network didn\'t answer',
+                    text: 'Your account is fine: the sign-in service did not reply in time. Try again in a moment.',
+                    retryHref: `/auth/login${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`,
+                    backHref: next || '/',
+                }));
+            }
+            if (!data || typeof data.access_token !== 'string') {
+                return retryOrExplain(req, res, next, {
+                    title: 'Sign-in didn\'t finish',
+                    text: 'OpenVibe.Network did not send a session. Start the sign-in again; your account is fine.',
+                });
             }
             try {
-                const claims = await verifySessionToken(token);
+                const claims = await verifySessionToken(data.access_token);
                 const session = await sessions.create({
                     subject: claims.subject_id,
                     username: typeof claims.username === 'string' ? claims.username : null,
@@ -174,13 +243,27 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
                     avatarUrl: claims.avatar_url, profileColor: claims.profile_color,
                 });
                 setSessionCookie(res, session);
+                res.clearCookie(RETRY_COOKIE, { ...cookieBase(), path: '/auth' });
                 // No Clear-Site-Data here or on sign-out: Chrome holds such an answer (and the cookies it sets) until the
                 // cache is cleared, which on phones left people on the account chooser with no session (2026-10-28).
                 return res.redirect(next);
             } catch (err) {
                 log.warn(`[sso] sign-in refused: ${(err && err.code) || (err && err.message) || err}`);
-                return res.status(401).type('text/plain').send('Sign-in failed: that account cannot be signed in here.');
+                return res.status(401).type('html').send(failurePage({
+                    siteName: 'OpenVibe.Watch',
+                    title: 'That account cannot sign in here',
+                    text: 'OpenVibe.Network confirmed the account, but this site cannot use it. Try another account or contact us.',
+                    retryHref: `/auth/login${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`,
+                    backHref: next || '/',
+                }));
             }
+        });
+
+        // GET /auth/health: does the Network accept this site's OAuth client? 503 only when it refuses it.
+        r.get('/health', async (_req, res) => {
+            const client = await sdkSso.checkClient();
+            res.set('Cache-Control', 'no-store');
+            return res.status(client === 'invalid' ? 503 : 200).json({ ok: client !== 'invalid', client });
         });
 
         // Sign-out ends the session, so another site must not be able to trigger it (a cross-site
