@@ -29,6 +29,7 @@ const { createWatchBilling } = require('./billing');
 const { createScheduler } = require('./scheduler');
 const { createEventSources } = require('./event-sources');
 const { createWebhookSources } = require('./webhook-sources');
+const { createProviderRates } = require('./provider-rates');
 const { createServiceOutbox } = require('openvibe-sdk/events');
 const { validate } = require('openvibe-contracts');
 const { jwksClient, createServiceTokenClient } = require('openvibe-sdk/auth');
@@ -45,7 +46,7 @@ const { createApp } = require('./app');
 const accountDataLib = require('./account-data');
 const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
-async function start({ config, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null, projectSecrets: givenProjectSecrets = null } = {}) {
+async function start({ config, env = process.env, db: givenDb = null, now = () => Date.now(), fetchImpl = globalThis.fetch, lookupImpl, log = console, listen = true, limitsNow = null, accountSend: givenSend = null, notifications: givenNotifications = null, post: givenPost = null, actor: givenActor = null, run: givenRun = null, codes: givenCodes = null, projects: givenProjects = null, machines: givenMachines = null, projectSecrets: givenProjectSecrets = null, providerRateProviders = null } = {}) {
     config = config || load();
     // PostgreSQL (ADR-035): opened and migrated here unless the caller (a test) hands in a migrated handle.
     const db = givenDb || await openDb(config, { log });
@@ -54,7 +55,8 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret,
         intervalMs: config.events.relayIntervalMs, fetch: fetchImpl, log, now, table: 'service_outbox',
         eventTypes: ['watch.watch.created', 'watch.watch.updated', 'watch.watch.paused', 'watch.watch.removed',
-            'watch.observation.recorded', 'watch.watch.triggered', 'watch.check.failed'],
+            'watch.observation.recorded', 'watch.watch.triggered', 'watch.check.failed',
+            'watch.rate.changed', 'watch.rate.approved', 'watch.rate.rejected'],
         validate: (env) => validate('events.event-envelope@1', env),
     });
     // Actions of fired watches (plan T18 step 4): notifications go to the owner through Network with Watch's own
@@ -94,6 +96,12 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const billing = createWatchBilling({ db, config: config.billing, networkUrl: config.networkInternalUrl, clock: { now }, fetchImpl, log });
     const check = createCheck({ db, registry, config, carriers, extract, condition, observations, outbox, actions, billing, now, log });
     const scheduler = createScheduler({ db, check, config, now, log });
+    // Provider-rate evidence (plan P6): created only behind WATCH_PROVIDER_RATES; the rows are seeded disabled and a
+    // person enables a source after reading its terms. The flag alone never fetches anything.
+    // D11 owner settings: always constructed so the store's switch applies live; off, it seeds nothing until an
+    // enabled request (server/api/provider-rates.js) or an owner change (onConfigActivate below) needs it.
+    const providerRates = createProviderRates({ db, config, fetcher, spacer, outbox, now, log, ...(providerRateProviders ? { providers: providerRateProviders } : {}) });
+    if (providerRates.enabled) await providerRates.init();
     // Event sources (plan T18 step 5): watches woken by OpenVibe.Events events, with their subscriptions kept in step.
     const eventSources = createEventSources({ db, check, config, fetchImpl, log, now });
     registry.onEventSourceChange(() => eventSources.kick());
@@ -111,7 +119,13 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     const accountSend = givenSend || (config.oauth.clientSecret
         ? createNetworkSender({ networkInternalUrl: config.networkInternalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, fetch: fetchImpl })
         : null);
-    const app = createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources, billing });
+    const app = await createApp({ config, env, db, registry, check, observations, scheduler, auth, outbox, actions, now, log, limitsNow, sessions, keyStore, siteLimits, accountData, accountSend, eventSources, webhookSources, billing, providerRates,
+        onConfigActivate: async (values) => {
+            if (!providerRates) return;
+            if (!values.enabled) return providerRates.stop();
+            await providerRates.init();
+            if (config.worker.enabled) providerRates.start();
+        } });
     // One JWKS client for the process (the SDK shares it with verifyUserToken): refresh in the background
     // on an unref'd timer, keeping the last good keys through a Network outage.
     keys.start();
@@ -120,6 +134,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
     if (config.worker.enabled) scheduler.start();
     actions.start();
     if (billing.enabled) billing.start();
+    if (providerRates && config.worker.enabled) providerRates.start();
     const pruneTimer = setInterval(async () => {
         try { await observations.prune(); } catch (err) { log.error(`[observations] prune: ${err.message}`); }
         try { await eventSources.prune(); } catch (err) { log.error(`[event-sources] prune: ${err.message}`); }
@@ -157,6 +172,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         eventSources.stop();
         keys.stop();
         await scheduler.stop();
+        if (providerRates) await providerRates.stop();
         await actions.stop();
         await billing.stop();
         await outbox.stop();
@@ -167,7 +183,7 @@ async function start({ config, db: givenDb = null, now = () => Date.now(), fetch
         if (!givenDb) await db.close();
     }
 
-    return { config, db, registry, eventSources, webhookSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, billing, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
+    return { config, db, registry, eventSources, webhookSources, observations, guard, fetcher, spacer, carriers, extract, condition, check, scheduler, outbox, actions, billing, providerRates, keys, keyLoaded, auth, sessions, keyStore, siteLimits, accountData, app, server, close };
 }
 
 /**

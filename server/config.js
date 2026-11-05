@@ -173,6 +173,18 @@ function load(env = process.env) {
             },
         },
 
+        // Provider-rate evidence (server/provider-rates.js, plan P6): the official price documents of DeepInfra and
+        // Featherless AI, fetched only when the flag is on and a person has enabled the source. Off by default; the
+        // module is not created when off. 8 MiB covers Featherless' ~3.2 MB model list; a fetch every 6 hours is
+        // polite, and a source is stale after twice that. No rate card is written here (README).
+        providerRates: {
+            enabled: env.WATCH_PROVIDER_RATES === '1',
+            tickMs: Math.max(1000, int(env.WATCH_PROVIDER_RATES_TICK_MS, 60_000)),
+            maxBytes: Math.min(32 * 1024 * 1024, Math.max(1024, int(env.WATCH_PROVIDER_RATES_MAX_BYTES, 8 * 1024 * 1024))),
+            pollIntervalSec: Math.max(300, int(env.WATCH_PROVIDER_RATES_POLL_SEC, 6 * 3600)),
+            staleAfterSec: Math.max(600, int(env.WATCH_PROVIDER_RATES_STALE_SEC, 12 * 3600)),
+        },
+
         // Usage readings → OpenVibe.Billing (server/billing.js, plan T5 step 14): one check-operation reading per
         // completed check, relayed every WATCH_BILLING_INTERVAL_MS with Watch's own client-credentials token. 0 (the
         // default) is off: nothing is queued and no timer starts. Without OV_BILLING_INTERNAL_URL or the client secret,

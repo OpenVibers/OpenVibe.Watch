@@ -60,7 +60,7 @@ t('boot, and the person\'s watches, checks and sessions', async () => {
 t('every table that names a person is covered or exempted with a reason', async () => {
     const missing = await uncovered(svc.db, {
         tables: TABLES,
-        exempt: { account_data_events: 'the ledger of requests itself: which export and deletion Watch applied' },
+        exempt: { account_data_events: 'the ledger of requests itself: which export and deletion Watch applied', config_snapshots: 'D11 configuration revisions: created_by names the owner who changed a setting, not a person\'s account data' },
     });
     assert.deepStrictEqual(missing, [], `a table with a person column is neither covered nor exempted: ${missing.join(', ')}`);
 });
