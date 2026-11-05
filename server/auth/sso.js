@@ -95,7 +95,6 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
         redirectUri: config.oauth.redirectUri,
         scope: config.oauth.scope,
         audience: config.oauth.sessionAudience,
-        jwks: config.jwksUrl,
         secureCookies: config.cookies.secure,
         fetch: fetchImpl,
         log,
@@ -178,12 +177,16 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             res.clearCookie(FLOW_COOKIE, { ...cookieBase(), path: '/auth' });
             const next = flow ? sanitizeNext(flow.next, config) : '/';
             if (req.query.error) {
+                // An explicit answer from the Network (access_denied, login_required, …) is not retried by itself.
                 res.clearCookie(RETRY_COOKIE, { ...cookieBase(), path: '/auth' });
                 log.warn(`[sso] sign-in not completed: ${String(req.query.error).slice(0, 120)}`);
-                return retryOrExplain(req, res, next, {
+                return res.status(400).type('html').send(failurePage({
+                    siteName: 'OpenVibe.Watch',
                     title: 'Sign-in didn\'t finish',
-                    text: `OpenVibe.Network did not complete the sign-in (${String(req.query.error).slice(0, 60)}). Try again; your account is fine.`,
-                });
+                    text: `OpenVibe.Network did not complete the sign-in (${String(req.query.error).slice(0, 60)}). Try again when you are ready; your account is fine.`,
+                    retryHref: `/auth/login${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`,
+                    backHref: next || '/',
+                }));
             }
             if (!flow || typeof flow.state !== 'string' || typeof flow.verifier !== 'string'
                 || typeof req.query.code !== 'string' || !sameString(req.query.state, flow.state)) {
