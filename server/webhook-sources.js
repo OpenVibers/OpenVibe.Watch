@@ -48,6 +48,7 @@
  *                  503 with Retry-After: 1 while the watch's previous check still runs; 413 over 256 KB.
  */
 const crypto = require('crypto');
+const { verifySlack, verifyDiscord, verifyTelegram } = require('openvibe-sdk/chat-apps');
 const { parseMail } = require('./mail-parse');
 
 const SECRET_RE = /^whk_[A-Za-z0-9_-]{43}$/;
@@ -126,14 +127,6 @@ function safeEqual(a, b) {
 const hmac = (secret, data) => crypto.createHmac('sha256', secret).update(data).digest('hex');
 const fresh = (ts, nowMs) => /^\d{1,12}$/.test(String(ts)) && Math.abs(Math.floor(nowMs / 1000) - Number(ts)) <= TOLERANCE_SEC;
 
-/** Slack's request signing: v0 over "v0:<timestamp>:<body>", the timestamp within five minutes. */
-function slackVerified(secret, raw, headers, nowMs) {
-    const ts = String(headers['x-slack-request-timestamp'] || '');
-    const sig = String(headers['x-slack-signature'] || '');
-    if (!fresh(ts, nowMs) || !sig.startsWith('v0=')) return false;
-    return safeEqual(sig, `v0=${hmac(secret, Buffer.concat([Buffer.from(`v0:${ts}:`), raw]))}`);
-}
-
 /** Stripe's webhook signing: v1 over "<t>.<body>" (any of several v1), t within five minutes. */
 function stripeVerified(secret, raw, headers, nowMs) {
     const parts = String(headers['stripe-signature'] || '').split(',').map((x) => x.trim().split('='));
@@ -143,33 +136,18 @@ function stripeVerified(secret, raw, headers, nowMs) {
     return parts.filter(([k]) => k === 'v1').some(([, v]) => safeEqual(v || '', want));
 }
 
-// The DER prefix of an Ed25519 public key (SubjectPublicKeyInfo), so the 32 raw bytes Discord shows become a key object.
-const ED25519_SPKI = Buffer.from('302a300506032b6570032100', 'hex');
-
-/** Discord's interaction signing: Ed25519 over "<timestamp><body>" with the application's public key. */
-function discordVerified(publicKeyHex, raw, headers, nowMs) {
-    const ts = String(headers['x-signature-timestamp'] || '');
-    const sig = String(headers['x-signature-ed25519'] || '');
-    if (!fresh(ts, nowMs) || !/^[0-9a-f]{128}$/i.test(sig) || !/^[0-9a-f]{64}$/i.test(publicKeyHex)) return false;
-    try {
-        const key = crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI, Buffer.from(publicKeyHex, 'hex')]), format: 'der', type: 'spki' });
-        return crypto.verify(null, Buffer.concat([Buffer.from(ts), raw]), key, Buffer.from(sig, 'hex'));
-    } catch { return false; }
-}
-
 /**
  * Does the delivery carry the watch's secret? With a sender's own secret (`provider`), only that sender's scheme
  * counts; with Watch's own, a matching body signature, the secret as a bearer token, or Telegram's secret token.
  */
 function verified(secret, raw, headers, { provider = null, now = Date.now() } = {}) {
     if (!secret) return false;
-    if (provider === 'slack') return slackVerified(secret, raw, headers, now);
+    if (provider === 'slack') return verifySlack({ secret, raw, headers, now });
     if (provider === 'stripe') return stripeVerified(secret, raw, headers, now);
-    if (provider === 'discord') return discordVerified(secret, raw, headers, now);
+    if (provider === 'discord') return verifyDiscord({ publicKey: secret, raw, headers, now });
     if (provider === 'youtube') return websubVerified(secret, raw, headers);
     if (provider) return false;
-    const tg = headers['x-telegram-bot-api-secret-token'];
-    if (tg != null && safeEqual(String(tg), secret)) return true;
+    if (verifyTelegram({ secret, headers })) return true;
     const sig = String(headers['x-hub-signature-256'] || '');
     if (sig.startsWith('sha256=')) {
         const want = `sha256=${crypto.createHmac('sha256', secret).update(raw).digest('hex')}`;

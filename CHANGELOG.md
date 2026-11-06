@@ -3,6 +3,15 @@
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 
+## 2026-11-06 — the chat apps' checks come from the SDK (agent plan A4)
+
+- Slack's v0 request signing, Discord's Ed25519 interaction signature and Telegram's secret token
+  are checked by `openvibe-sdk/chat-apps` (`verifySlack`, `verifyDiscord`, `verifyTelegram`), the
+  same code the chat bots use, instead of Watch's own copies (`server/webhook-sources.js`). The
+  behaviour is unchanged: the same five-minute window, the same exact raw bytes, the same
+  constant-time comparison, and a provider Watch does not know still checks nothing.
+- Pins openvibe-sdk v0.92.0 (was v0.82.0).
+
 ## 2026-11-03 — email in (agent plan A3)
 
 - A webhook watch can have an email address of its own (`in-…@openvibe.watch`): mail sent there runs its check on the
