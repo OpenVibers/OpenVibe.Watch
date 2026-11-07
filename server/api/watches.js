@@ -22,7 +22,7 @@ const { http } = require('openvibe-contracts');
 const { CAPS } = require('../auth');
 const { RegistryError, STATUSES } = require('../registry');
 
-function watchesRouter({ registry, auth, limits, webhookSources = null }) {
+function watchesRouter({ registry, auth, limits, webhookSources = null, sharing = null }) {
     const router = express.Router();
     const read = [auth.requireCap(CAPS.read), limits.reads('watch.read')];
     const manage = [auth.requireCap(CAPS.manage), limits.budget('watch.write')];
@@ -57,8 +57,18 @@ function watchesRouter({ registry, auth, limits, webhookSources = null }) {
 
     router.get('/api/v1/watches/:id', read, async (req, res) => {
         const row = await registry.get(req.params.id, req.principal);
-        if (!row) return notFound(res, req);
-        res.json({ watch: registry.view(row) });
+        if (row) return res.json({ watch: registry.view(row) });
+        // A watch shared with this person (design 2026-11-06, step 6): the person's own token, never a service's
+        // subject, and the one check is canView. Another owner's private watch is still 404, never 403.
+        const person = req.principal && (req.principal.kind === 'person' ? req.principal.sub : null);
+        if (sharing && person) {
+            const ok = await sharing.canView({ kind: 'user', subject: person }, req.params.id).catch(() => false);
+            if (ok) {
+                const any = await registry.get(req.params.id, {});
+                if (any) return res.json({ watch: registry.view(any) });
+            }
+        }
+        return notFound(res, req);
     });
 
     router.post('/api/v1/watches', manage, async (req, res) => {

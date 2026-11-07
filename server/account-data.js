@@ -28,6 +28,25 @@ async function extraExport(db, subject) {
 }
 
 async function extraErase(t, subjects, counts) {
+    // Sharing (design 2026-11-06, step 6): the person's share rows and default go, and so do their memberships in
+    // somebody else's shared watch, or a deleted account would linger in a member list. Children first.
+    for (const subject of subjects) {
+        const id = String(subject).replace(/^user:/, '');
+        await t.exec('DELETE FROM watch_share_defaults WHERE subject = $1', [id]);
+        await t.exec("DELETE FROM share_members WHERE service='watch' AND subject->>'id' = $1", [id]);
+        await t.exec("DELETE FROM share_transfers WHERE service='watch' AND (from_subject->>'id' = $1 OR to_subject->>'id' = $1)", [id]);
+        await t.exec("DELETE FROM share_access_requests WHERE service='watch' AND subject->>'id' = $1", [id]);
+    }
+    for (const subject of subjects) {
+        const id = String(subject).replace(/^user:/, '');
+        const owned = await t.many("SELECT resource_id FROM shares WHERE service='watch' AND owner_subject->>'id' = $1", [id]);
+        for (const row of owned) {
+            await t.exec("DELETE FROM share_members WHERE service='watch' AND resource_id=$1", [row.resource_id]);
+            await t.exec("DELETE FROM share_transfers WHERE service='watch' AND resource_id=$1", [row.resource_id]);
+            await t.exec("DELETE FROM share_access_requests WHERE service='watch' AND resource_id=$1", [row.resource_id]);
+            await t.exec("DELETE FROM shares WHERE service='watch' AND resource_id=$1", [row.resource_id]);
+        }
+    }
     const mine = '(SELECT id FROM watches WHERE owner_sub = ANY($1::text[]))';
     counts.add(counts.erased, 'observations', await t.exec(`DELETE FROM observations WHERE watch_id IN ${mine}`, [subjects]));
     counts.add(counts.erased, 'check_runs', await t.exec(`DELETE FROM check_runs WHERE watch_id IN ${mine}`, [subjects]));

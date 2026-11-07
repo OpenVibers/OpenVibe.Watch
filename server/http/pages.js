@@ -150,8 +150,12 @@ function sameOrigin(req, baseUrl) {
     try { return origin === new URL(baseUrl).origin; } catch { return false; }
 }
 
+// The one Share sheet (openvibe-shared ov-share.js): its stylesheet and script, and the gate that draws itself from
+// markup. A page with a Share button needs the shared navbar, which loads the sheet on the first press.
+const SHARE_HEAD = `<link rel="stylesheet" href="${require('openvibe-shared/serve').url('ov-share.css')}"><script src="${require('openvibe-shared/serve').url('ov-share.js')}" defer></script>`;
+
 function createPageRoutes(ctx) {
-    const { config, db, registry, check, observations, sessions, actions = null, log = console } = ctx;   // ctx.webhookSources: the webhook template
+    const { config, db, registry, check, observations, sessions, actions = null, log = console, sharing = null } = ctx;   // ctx.webhookSources: the webhook template
     const r = express.Router();
     const formBody = express.urlencoded({ extended: false, limit: '32kb' });
 
@@ -669,11 +673,14 @@ ${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-you
         const before = beforeId(req.query.before);
         const rows = await registry.all(principalOf(req), { before, limit: PAGE });
         const withLatest = await Promise.all(rows.map(async (row) => ({ row, latest: await observations.latest(row.id) })));
+        // Every watch on this page gets its share row (Only me until the person shares it), so its Share button works.
+        await Promise.all(withLatest.map(({ row }) => ensureShare(req.viewer.subject, row.id)));
+        const defaultAudience = sharing ? await sharing.defaultOf(req.viewer.subject).catch(() => 'private') : 'private';
         const watchRows = withLatest.map(({ row, latest }) => {
             const v = registry.view(row);
             const notArmed = v.status === 'paused' && row.armed_at == null;
             return [
-                html`<a href="/watches/${row.id}">${v.name}</a>`,
+                html`<a href="/watches/${row.id}">${v.name}</a> <button type="button" class="btn small" data-ov-share-sheet data-kind="watch" data-id="${row.id}" data-title="${v.name}">Share</button>`,
                 html`<code>${W.host(v.source.url)}</code>`,
                 W.conditionSentence(v),
                 html`${badge(notArmed ? 'Not armed yet' : W.statusWords(v.status), notArmed ? 'warn' : W.statusKind(v.status))}`,
@@ -685,10 +692,17 @@ ${summary ? html`<section class="sc-sec" aria-labelledby="h-yours"><h2 id="h-you
             ];
         });
         const older = rows.length === PAGE ? `/watches?before=${rows[rows.length - 1].id}` : null;
+        const audienceText = { private: 'Only me', people: 'Specific people', link: 'Anyone with the link', public: 'Everyone' };
+        const defaultOptions = ['private', 'people', 'link']
+            .map((a) => html`<option value="${a}"${a === defaultAudience ? raw(' selected') : ''}>${audienceText[a]}</option>`);
         page(req, res, {
-            title: 'Your watches', private: true,
+            title: 'Your watches', private: true, head: SHARE_HEAD,
             body: html`<h1>Your watches</h1>
 <p><a class="btn primary" href="/watches/new?template=page">New watch</a></p>
+<section class="card" aria-labelledby="h-new-aud"><h2 id="h-new-aud">New watches</h2>
+<form method="post" action="/watches/defaults" class="inline"><label>Who can open a new watch <select name="audience">${defaultOptions}</select></label>
+<label><input type="checkbox" name="apply_all" value="1"> Apply to all my existing watches</label> <button class="btn" type="submit">Save</button></form>
+<p class="muted small">A watch's Share button changes just that one. Your watches are never listed; a shared watch is readable only by whoever holds the link or the people you add.</p></section>
 ${table(['Name', 'Source', 'Condition', 'Status', 'Last check', 'Last value', 'Next due'], watchRows, { empty: 'You have no watches yet. Start with one of the four kinds on the home page.' })}
 <nav class="pager" aria-label="Pages">
 ${before ? html`<a class="btn" href="/watches">Newest first</a>` : ''}
@@ -791,6 +805,59 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: CREATE_S
 <p>There is no watch here with that id, or it belongs to someone else. A watch is private to the account that made it.</p>
 <p><a href="/watches">Your watches</a></p>`);
 
+    /** A watch's share row, made at the owner's default the first time its owner opens it (or the list). */
+    async function ensureShare(subject, id) {
+        if (!sharing) return 'private';
+        const row = await sharing.shareOf(id).catch(() => null);
+        if (row) return row.audience;
+        const audience = await sharing.defaultOf(subject).catch(() => 'private');
+        await sharing.register(subject, id, audience).catch(() => {});
+        return audience;
+    }
+
+    /** The page a reader of a shared watch sees: the watch and its observations, never its actions or secrets. */
+    async function sharedWatchPage(req, res, row) {
+        const id = String(row.id);
+        const v = registry.view(row);
+        const audience = sharing ? await sharing.audienceOf(id).catch(() => null) : null;
+        const latest = await observations.latest(row.id);
+        const obs = await observations.list(row.id, { limit: 20 });
+        const obsRows = obs.map((o) => [
+            time(new Date(Number(o.observed_at)).toISOString()),
+            W.valueWords(o.value, 120),
+            o.changed ? badge('changed', 'info') : html`<span class="muted">no</span>`,
+            o.condition_met ? badge('met', 'ok') : html`<span class="muted">no</span>`,
+        ]);
+        const who = { public: 'Everyone', link: 'Anyone with the link', people: 'Specific people', private: 'Only me' }[audience] || 'Only me';
+        return page(req, res, {
+            title: v.name, private: true, head: SHARE_HEAD, crumbs: [{ label: 'A shared watch', href: '/' }, { label: v.name }],
+            body: html`<h1>${v.name}</h1>
+<p class="in-words">${W.inWords(v)}</p>
+<p class="muted"><span class="badge">${who}</span> · a watch shared on OpenVibe.Watch. What it does when it fires is its owner's business and is not shown here.</p>
+<dl class="facts">
+<dt>Status</dt><dd>${badge(W.statusWords(v.status), W.statusKind(v.status))}</dd>
+<dt>Source</dt><dd><code>${v.source.kind}</code> · <code>${v.source.url || (v.source.pattern ? v.source.pattern : '(none)')}</code></dd>
+<dt>Cadence</dt><dd>${v.cadence ? W.everyWords(v.cadence.every_sec) : 'when its event arrives'}</dd>
+<dt>Last check</dt><dd>${v.health.last_check_at ? html`${time(v.health.last_check_at)} — ${W.stateWords(v.health.last_state)}` : html`<span class="muted">not checked yet</span>`}</dd>
+<dt>Last value</dt><dd>${latest ? W.valueWords(latest.value, 200) : html`<span class="muted">nothing recorded yet</span>`}</dd>
+</dl>
+<section aria-labelledby="h-obs"><h2 id="h-obs">Observation history</h2>
+${table(['When', 'Value', 'Changed', 'Condition'], obsRows, { empty: 'No observations yet.' })}</section>
+<p class="muted small"><a href="/watches">Your watches</a></p>`,
+        });
+    }
+
+    /** The page a person not on a Specific-people watch's list sees: the audience, never the watch's name or source. */
+    function sharedWatchGate(req, res, id) {
+        const who = signedIn(req) ? (viewer(req).username || '') : '';
+        return page(req, res, {
+            title: 'A watch shared with specific people', private: true, head: SHARE_HEAD,
+            body: html`<h1>A watch shared with specific people</h1>
+<p>Sign in with the OpenVibe account it was shared with, or ask its owner for access.</p>
+<div data-ov-share-gate data-kind="watch" data-id="${id}" data-signed-in-as="${who}" data-sign-in-url="/auth/login?next=${encodeURIComponent(req.originalUrl)}">This is shared with specific people. Sign in with the OpenVibe account it was shared with, or ask its owner for access.</div>`,
+        }, 404);
+    }
+
     const obsLimit = (q) => Math.min(Math.max(INT(q, 20), 1), 100);
     const ridBefore = (q) => (/^\d{1,18}$/.test(String(q || '')) ? Number(q) : null);
 
@@ -816,10 +883,34 @@ ${watchForm({ template, fields, errors, action: '/watches/new', submit: CREATE_S
         return request.evidence || (request.body && request.body.evidence) || null;
     }
 
+    r.post('/watches/defaults', formBody, async (req, res) => {
+        if (!signedIn(req)) return res.redirect(303, '/auth/login?next=%2Fwatches');
+        if (!sameOrigin(req, config.baseUrl)) return crossSite(req, res, 'Changing');
+        if (sharing) {
+            const audience = ['private', 'people', 'link', 'public'].includes(req.body.audience) ? req.body.audience : 'private';
+            await sharing.setDefault(req.viewer.subject, audience, { applyAll: String(req.body.apply_all || '') === '1' })
+                .catch((err) => log.warn('[Watch] the watch default was not saved:', err.message));
+        }
+        return res.redirect(303, '/watches');
+    });
+
     r.get('/watches/:id', async (req, res) => {
-        if (!signedIn(req)) return res.redirect(303, `/auth/login?next=${encodeURIComponent(req.originalUrl)}`);
-        const row = await owned(req, res);
-        if (!row) return notFoundPage(req, res);
+        const id = String(req.params.id || '');
+        const row = signedIn(req) ? await owned(req, res) : null;
+        if (!row) {
+            // A shared watch (design 2026-11-06, step 6): its owner's, or a reader it was shared with. A reader sees the
+            // watch and what it observed, never its actions or secrets. A Specific-people watch answers the gate.
+            const canView = sharing ? await sharing.canView(viewer(req), id).catch(() => false) : false;
+            if (canView) {
+                const any = await registry.get(id, {});
+                if (any) return await sharedWatchPage(req, res, any);
+            }
+            const audience = sharing ? await sharing.audienceOf(id).catch(() => null) : null;
+            if (audience === 'people') return sharedWatchGate(req, res, id);
+            if (!signedIn(req)) return res.redirect(303, `/auth/login?next=${encodeURIComponent(req.originalUrl)}`);
+            return notFoundPage(req, res);
+        }
+        const audience = await ensureShare(req.viewer.subject, row.id);
         const v = registry.view(row);
         const latest = await observations.latest(row.id);
         const obs = await observations.list(row.id, { before: ridBefore(req.query.obs_before), limit: obsLimit(req.query.obs_limit) });
@@ -887,9 +978,10 @@ ${unarmed ? '' : html`<form class="inline" method="post" action="/watches/${v.id
         const nextRuns = runs.length === obsLimit(req.query.checks_limit) ? `/watches/${v.id}?checks_before=${runs[runs.length - 1].rid}` : null;
 
         page(req, res, {
-            title: v.name, private: true, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name }],
+            title: v.name, private: true, head: SHARE_HEAD, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name }],
             body: html`<h1>${v.name}</h1>
 <p class="in-words">${W.inWords(v)}</p>
+<p class="muted"><span class="badge">${({ public: 'Everyone', link: 'Anyone with the link', people: 'Specific people', private: 'Only me' })[audience] || 'Only me'}</span> <button type="button" class="btn small" data-ov-share-sheet data-kind="watch" data-id="${v.id}" data-title="${v.name}">Share</button></p>
 ${ran ? notice(html`The check ran: <strong>${W.stateWords(ran)}</strong>.`, ran === 'changed' || ran === 'condition_met' ? 'ok' : 'info') : ''}
 ${testRun ? testCheckNotice(testRun, testObs, v) : ''}
 <dl class="facts">
@@ -974,6 +1066,7 @@ ${table(['When', 'State', 'HTTP', 'Detail', 'Read', 'Fired'], runRows, { empty: 
         await registry.remove(row.id, principalOf(req));
         // As the API's delete does: its webhook secret or address goes, and a YouTube hub is told to stop.
         if (ctx.webhookSources) await ctx.webhookSources.forget(row.id);
+        if (sharing) await sharing.forget(row.id);
         return res.redirect(303, '/watches');
     });
 
@@ -1079,7 +1172,7 @@ ${notice('Copy the secret now: it is not shown again. Making a new one replaces 
     async function detailNotice(req, res, row, status, text) {
         const v = registry.view(row);
         return page(req, res, {
-            title: v.name, private: true, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name }],
+            title: v.name, private: true, head: SHARE_HEAD, crumbs: [{ label: 'Your watches', href: '/watches' }, { label: v.name }],
             body: html`<h1>${v.name}</h1>
 ${notice(text, status === 401 || status === 409 ? 'warn' : 'info')}
 <p>${W.inWords(v)}</p>
