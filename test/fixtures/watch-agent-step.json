@@ -1,0 +1,18 @@
+{
+  "step_id": "wch_01JAB2C3D4E5F6G7H8J9K0MNPS",
+  "mode": "watch",
+  "product": "watch",
+  "ref": "wch_01JAB2C3D4E5F6G7H8J9K0MNPS",
+  "title": "Watching #167 CI",
+  "status": "waiting",
+  "started_at": "2026-11-07T09:00:00.000Z",
+  "ended_at": null,
+  "placement": {
+    "where": "On the network",
+    "why": "it checks the page from our side, on your schedule, and only tells you when it changes"
+  },
+  "cost_usd": null,
+  "link": "https://openvibe.watch/watches/wch_01JAB2C3D4E5F6G7H8J9K0MNPS",
+  "reason": null,
+  "transition": "Waiting for CI on #167 (Watch, 4 min), then I'll merge it (Act) and deploy on your machine (Run)."
+}

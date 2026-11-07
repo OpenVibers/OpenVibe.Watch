@@ -56,7 +56,8 @@ async function start({ config, env = process.env, db: givenDb = null, now = () =
         intervalMs: config.events.relayIntervalMs, fetch: fetchImpl, log, now, table: 'service_outbox',
         eventTypes: ['watch.watch.created', 'watch.watch.updated', 'watch.watch.paused', 'watch.watch.removed',
             'watch.observation.recorded', 'watch.watch.triggered', 'watch.check.failed',
-            'watch.rate.changed', 'watch.rate.approved', 'watch.rate.rejected'],
+            'watch.rate.changed', 'watch.rate.approved', 'watch.rate.rejected',
+            'agent.step.started', 'agent.step.updated', 'agent.step.ended'],
         validate: (env) => validate('events.event-envelope@1', env),
     });
     // Actions of fired watches (plan T18 step 4): notifications go to the owner through Network with Watch's own
@@ -71,7 +72,7 @@ async function start({ config, env = process.env, db: givenDb = null, now = () =
     // A watch that names a project: Network says whether its owner is an admin or owner of it, when it is saved (Run checks
     // again before every job). Without the client secret no project can be checked, so none can be named.
     const projects = givenProjects || (client ? createProjects(client, { networkUrl: config.networkInternalUrl }) : null);
-    const registry = createRegistry({ db, now, outbox, source: config.serviceId, maxWatchesPerOwner: config.watches.maxPerOwner, secretGrants: config.secretGrants, projects });
+    const registry = createRegistry({ db, now, outbox, source: config.serviceId, maxWatchesPerOwner: config.watches.maxPerOwner, secretGrants: config.secretGrants, projects, baseUrl: config.baseUrl });
     const observations = createObservations({ db, now });
     // The only way out to the internet: SSRF guard (ports, private hosts, every redirect hop), byte
     // cap, one deadline, conditional GET; per-host spacing in front of every request.

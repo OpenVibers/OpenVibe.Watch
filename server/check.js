@@ -28,6 +28,7 @@ const { ids: contractIds, validate } = require('openvibe-contracts');
 const { nextDue } = require('./registry');
 const { ExtractError } = require('./extract');
 const { envelope } = require('./events/envelope');
+const { emitAgentStep } = require('./events/agent-step');
 
 /** States that count as a failure, back off, and emit watch.check.failed. */
 const FAILURE_STATES = new Set(['http_error', 'timeout', 'parse_error', 'rate_limited', 'budget_exceeded', 'skipped', 'disabled']);
@@ -177,6 +178,19 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
                 failures, next_due: armed, not_before: notBefore,
             });
             for (const e of events || []) await outbox.emit(envelope(e, config.serviceId, now));
+            // The agent's step (design 2026-11-07): the watch is one step, so a check brings it forward rather than
+            // adding an entry per check. A failed check shows failed (with the one-line reason); the next good one
+            // is waiting again.
+            if (watch.status === 'active') {
+                const failed = FAILURE_STATES.has(run.state);
+                await emitAgentStep(outbox, watch, {
+                    topic: 'updated', status: failed ? 'failed' : 'waiting',
+                    startedAt: run.started_at, endedAt: failed ? run.finished_at : null,
+                    reason: failed ? (run.detail || run.error_code || 'the check did not complete') : null,
+                    costUsd: typeof run.cost_usd === 'number' ? run.cost_usd : null,
+                    baseUrl: config.baseUrl, now,
+                });
+            }
             // A run that fired queues the watch's actions in this same commit (server/actions.js): once per trigger.
             if (fired && actions) await actions.queue({ watch, run, ...fired });
         });
