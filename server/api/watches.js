@@ -10,6 +10,7 @@
  *     PATCH  /api/v1/watches/:id          change fields; pause/resume through status
  *     POST   /api/v1/watches/:id/pause    status = paused
  *     POST   /api/v1/watches/:id/resume   status = active (and re-armed)
+ *     POST   /api/v1/watches/:id/schedule  a routine's five-field cron and timezone (Actor's subscription)
  *     DELETE /api/v1/watches/:id          soft delete (observations stay resolvable)
  *
  * Another owner's watch is 404, never 403: an id must not confirm that someone else's watch exists.
@@ -99,6 +100,17 @@ function watchesRouter({ registry, auth, limits, webhookSources = null, sharing 
     };
     router.post('/api/v1/watches/:id/pause', manage, setStatus('paused'));
     router.post('/api/v1/watches/:id/resume', manage, setStatus('active'));
+
+    // The routine's cron: Actor saves it after creating the subscription as the person. It is separate from the
+    // watch request (watch.watch-request@1 knows source and cadence, not a schedule); the watch stays paused until it
+    // is resumed, so a routine never fires between the create and this call.
+    router.post('/api/v1/watches/:id/schedule', manage, async (req, res) => {
+        try {
+            const out = await registry.setSchedule(req.params.id, req.body || {}, req.principal);
+            if (!out) return notFound(res, req);
+            res.json(out);
+        } catch (err) { fail(res, req, err); }
+    });
 
     // A new secret for a webhook watch (the old one stops working at once); also how a watch that became a webhook
     // watch gets its first.

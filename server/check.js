@@ -193,9 +193,38 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
             }
             // A run that fired queues the watch's actions in this same commit (server/actions.js): once per trigger.
             if (fired && actions) await actions.queue({ watch, run, ...fired });
+            // A watch that has failed five checks in a row pauses itself: one broken page must not keep spending
+            // checks (or waking its owner) until someone notices. Resuming clears the streak and arms it again.
+            if (failures >= 5 && watch.status === 'active') {
+                await db.prepare("UPDATE watches SET status = 'paused', next_due_at = 0, updated_at = ? WHERE id = ? AND status = 'active' AND deleted_at IS NULL")
+                    .run(run.finished_at, watch.id);
+                await emitAgentStep(outbox, watch, {
+                    topic: 'ended', status: 'stopped', startedAt: watch.created_at, endedAt: run.finished_at,
+                    reason: `paused after ${failures} failed checks in a row: ${run.detail || run.error_code || run.state}`.slice(0, 500),
+                    baseUrl: config.baseUrl, now,
+                });
+            }
         });
         outbox.kick().catch(() => { });
         return { run, observation, met: run.triggers > 0, failures };
+    }
+
+    /**
+     * A routine: a watch with a schedule and no source to fetch. The run is the action itself, recorded as a
+     * condition_met check (so the watch's trail and next occurrence stay truthful) and queued once per
+     * occurrence. A quiet test records the run but fires nothing.
+     */
+    async function runScheduled({ row, watch, trigger, startedAt, quiet = false }) {
+        const finishedAt = now();
+        const value = { scheduled_at: new Date(startedAt).toISOString(), cron: watch.schedule.cron, timezone: watch.schedule.timezone || 'UTC' };
+        const run = {
+            ...baseRun(watch, trigger, 'schedule', startedAt),
+            state: quiet ? 'ok' : 'condition_met', triggers: quiet ? 0 : 1, finished_at: finishedAt,
+            detail: quiet ? 'quiet test: nothing fired' : null,
+        };
+        const fired = quiet ? null : { owner: row.owner_sub, value, previousValue: null, observedAt: finishedAt };
+        const out = await settle({ watch, run, failures: 0, successAt: finishedAt, events: [], fired });
+        return { ...out, met: !quiet };
     }
 
     // ── One check ────────────────────────────────────────────────────────────────────────────
@@ -219,6 +248,11 @@ function createCheck({ db, registry, config, carriers, extract, condition, obser
         // quiet test of a just-created paused watch: it runs once with `quiet` and sends nothing.
         if (row.status !== 'active' && !(quiet && row.status === 'paused')) {
             return { disabled: true, ...(await skip('disabled', `watch_${row.status}`, `the watch is ${row.status}`)) };
+        }
+
+        // A routine has no source to fetch: the occurrence itself is the run, and its actions are queued below.
+        if (watch.schedule && watch.schedule.cron) {
+            return await runScheduled({ row, watch, trigger, startedAt, quiet });
         }
 
         // An extraction this release cannot run (an AI reading is an action, step 10): never fetch.

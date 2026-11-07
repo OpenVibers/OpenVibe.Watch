@@ -261,7 +261,14 @@ function createActions({ db, config, notifications = null, post = null, actor = 
                 } else { state = 'skipped'; error = 'watch.action_no_person: an Actor task runs under a person\'s allowance, and this watch belongs to an agent or a service'; }
             } else if (kind === 'actor-agent') {
                 if (USER_SUBJECT.test(String(owner || ''))) {
-                    request = { agent_id: action.agent_id, input: actorAgentInputFor({ config, watch, action, value, previousValue, observedAt }) };
+                    request = {
+                        agent_id: action.agent_id,
+                        input: actorAgentInputFor({ config, watch, action, value, previousValue, observedAt }),
+                        // The subscription and the Actor trigger it was made for: Actor links the run to the card
+                        // (actor.trigger@1) without parsing the watch URL out of the text.
+                        watch_id: watch.id,
+                        trigger_id: (watch.labels && watch.labels.actor_trigger) || null,
+                    };
                 } else { state = 'skipped'; error = 'watch.action_no_person: an Actor agent runs for a person, and this watch belongs to an agent or a service'; }
             } else if (kind === 'run-job') {
                 if (!USER_SUBJECT.test(String(owner || ''))) { state = 'skipped'; error = 'watch.action_no_person: a Run job is started for a person in their project, and this watch belongs to an agent or a service'; }
@@ -344,7 +351,10 @@ function createActions({ db, config, notifications = null, post = null, actor = 
     async function deliverActorAgent(row, request) {
         if (!actor) throw Object.assign(new Error('Actor delivery is not configured in this process'), { code: 'actor_unconfigured' });
         try {
-            const task = await actor.runAgent({ subjectId: row.owner_sub, agentId: request.agent_id, input: request.input });
+            const task = await actor.runAgent({
+                subjectId: row.owner_sub, agentId: request.agent_id, input: request.input,
+                watchId: request.watch_id || null, triggerId: request.trigger_id || null,
+            });
             return { state: 'sent', error: `Actor task ${task.id || '(no id)'}` };
         } catch (err) {
             if (err && err.status === 404 && err.code === 'actor.agent.not_found') return { state: 'failed', error: `watch.action_refused: ${err.code}: this agent was not found for the watch owner` };
