@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-09 — a routine is a watch with a cron (Actor's triggers)
+
+- **A schedule watch**: `POST /api/v1/watches/:id/schedule` saves a five-field cron and timezone (migration
+  `0021_actor_schedule`). The scheduler fires it like a cadence; `check.run` records the occurrence as a
+  `condition_met` run with carrier `schedule` and queues the watch's actions without fetching anything. The floor is 15
+  minutes, as it is for a cadence. The source stays a valid `watch.watch@1` kind (the subscription is created paused, a
+  webhook source is refused deliveries, and the routine never polls a page), so the released watch schema is unchanged.
+- **A watch that fails five checks in a row pauses itself** and says so (one `agent.step` ended step); resuming clears
+  the streak and arms it again. A routine's action then reaches Actor with `watch_id` and the Actor `trigger_id` from
+  the watch's `actor_trigger` label, so the run links back to its card.
+
 What shipped on OpenVibe.Watch, newest first. The plan is T18 ("Watch complete"); each entry names
 the step it landed.
 

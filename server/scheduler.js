@@ -1,15 +1,17 @@
 'use strict';
 /**
  * In-process scheduler: every WATCH_TICK_MS, start checks for active watches whose next_due_at and
- * not_before have passed, oldest due first, up to WATCH_MAX_CONCURRENT checks at a time. The due
- * query is the one the migration's partial index serves, and check.run() itself refuses a second
+ * not_before have passed, oldest due first, up to WATCH_MAX_CONCURRENT checks at a time. A routine
+ * (schedule) watch is due the same way; its check runs the action without fetching anything. The due
+ * query is the one the migrations' partial indexes serve, and check.run() itself refuses a second
  * check of a watch already in flight (so a manual check and a scheduled one never overlap).
  *
  * Copied from OpenVibe.Sources/server/scheduler.js with Watch's due query (watches, not sources;
  * cadence IS NOT NULL, since a source pushed to by an event or webhook never polls).
  */
 function createScheduler({ db, check, config, now = () => Date.now(), log = console }) {
-    const due = db.prepare(`SELECT id FROM watches WHERE status = 'active' AND deleted_at IS NULL AND cadence IS NOT NULL
+    const due = db.prepare(`SELECT id FROM watches WHERE status = 'active' AND deleted_at IS NULL
+        AND (cadence IS NOT NULL OR schedule IS NOT NULL)
         AND next_due_at <= @now AND not_before <= @now ORDER BY next_due_at, id LIMIT @limit`);
     let timer = null;
     const running = new Set();
