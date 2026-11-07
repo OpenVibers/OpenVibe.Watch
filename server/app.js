@@ -59,7 +59,7 @@ const TEXT_INDEX = [
 const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openvibe.network https://static.cloudflareinsights.com; "
     + "style-src 'self' 'unsafe-inline' https://openvibe.network https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
     + "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://openvibe.network https://openvibe.media; "
-    + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
+    + "connect-src 'self' https://openvibe.network https://openvibe.chat https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
 async function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null, billing = null, providerRates = null, env = process.env, onConfigActivate = null, sharing = null }) {
