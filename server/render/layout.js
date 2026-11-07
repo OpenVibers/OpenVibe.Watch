@@ -86,7 +86,7 @@ function renderPage(o) {
         navLinks: NAV,
         navbar: nav,
         footer,
-        head: `<meta name="referrer" content="strict-origin-when-cross-origin">
+        head: `${o.head || ''}<meta name="referrer" content="strict-origin-when-cross-origin">
 ${appIcon.headTags({ site: 'watch' })}
 ${(o.styles || []).map((name) => `<link rel="stylesheet" href="${esc(ovServe.url(name))}">`).join('\n')}
 <link rel="stylesheet" href="${asset('css/app.css')}">

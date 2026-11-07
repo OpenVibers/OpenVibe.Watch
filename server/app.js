@@ -20,6 +20,7 @@ const cache = require('openvibe-shared/cache-policy');
 const { createWatchReadiness, registerWatchGauges } = require('./observability');
 const { createSso } = require('./auth/sso');
 const { createPageRoutes } = require('./http/pages');
+const { createSharing } = require('./sharing');
 const { watchesRouter } = require('./api/watches');
 const { resourceIndexRouter } = require('./api/resource-index');
 const { resourceControlRouter } = require('./api/resource-control');
@@ -61,7 +62,7 @@ const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://openv
     + "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com; "
     + "frame-src 'self' https://openvibe.network; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://openvibe.network";
 
-async function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null, billing = null, providerRates = null, env = process.env, onConfigActivate = null }) {
+async function createApp({ config, db, registry, check, observations, scheduler, auth, outbox, actions = null, now, log = console, limitsNow = null, sessions, keyStore, siteLimits, fetchImpl = globalThis.fetch, accountData = null, accountSend = null, eventSources = null, webhookSources = null, billing = null, providerRates = null, env = process.env, onConfigActivate = null, sharing = null }) {
     const app = express();
     // GET /openapi.json (SEO-3): this service's public API as OpenAPI 3.1, generated from the contracts
     // (openvibe-contracts); the operations they mark internal-only are left out.
@@ -138,12 +139,34 @@ async function createApp({ config, db, registry, check, observations, scheduler,
     // ── Who is signed in (the session cookie; never a Network token) ──
     const sso = createSso({ config, keys: keyStore, sessions, fetchImpl, now: now || (() => Date.now()), log });
     app.use(sso.middleware());
+    // The one sharing system (design 2026-11-06): a watch is its owner's until the Share sheet says otherwise.
+    const sharingSystem = sharing || createSharing({ db, config, fetchImpl, log });
 
     // ── Sign-in (OAuth2 + PKCE client of OpenVibe.Network) ──
     app.use('/auth', sso.routes());
 
     // ── Static assets (content-hashed ?v= → immutable) ──
     app.use('/shared', require('openvibe-shared/serve').handler());
+    // ── /api/v1/watch/:id/share — the one Share sheet's API (openvibe-sdk/share) ──
+    // GET/PUT .../share, .../share/requests, .../share/transfer[/accept|decline|cancel], GET /api/v1/share/people
+    // and /api/v1/shared-with-me. Access is still decided by canView on the watch's page; the router answers only its
+    // own paths. The sheet is a browser, so it presents the session cookie (req.viewer).
+    {
+        const shareApi = express.Router();
+        shareApi.use(sharingSystem.shares.router({
+            service: 'watch',
+            authenticate: (req) => sharingSystem.shareViewer(req.viewer),
+            describe: sharingSystem.describe,
+        }));
+        const SHARE_PATH = /^\/api\/v1\/(?:shared-with-me$|share\/people$|[^/]+\/[^/]+\/share(?:\/|$))/;
+        app.use((req, res, next) => (SHARE_PATH.test(req.path) ? shareApi(req, res, next) : next()));
+    }
+    // Expire members and transfers and send queued share events/notifications. Unref'd: it never holds a test open.
+    {
+        const timer = setInterval(() => { sharingSystem.work().catch(() => { /* logged inside */ }); }, 15_000);
+        if (timer.unref) timer.unref();
+        app.locals.sharingTimer = timer;
+    }
     // Terms, Privacy and DMCA in this site's own words (openvibe-shared/legal, profile 'service'; 11-03: the footer's
     // legal links answered 404 here). The facts must match the code: change both together.
     const legal = require('openvibe-shared/legal');
@@ -175,7 +198,7 @@ async function createApp({ config, db, registry, check, observations, scheduler,
     app.use(resourceIndexRouter({ db, auth }));
     // ...and its control API (watch.resource.control, ADR-048): suspend, resume and delete a person's watch.
     app.use(resourceControlRouter({ db, auth, registry, now }));
-    app.use(watchesRouter({ registry, auth, limits, webhookSources }));
+    app.use(watchesRouter({ registry, auth, limits, webhookSources, sharing: sharingSystem }));
     app.use(checksRouter({ registry, check, observations, auth, limits }));
     // Provider-rate evidence (plan P6, server/api/provider-rates.js): mounted only with WATCH_PROVIDER_RATES=1. With
     // the flag off every path below is the API's ordinary 404 and no timer exists.
@@ -197,7 +220,7 @@ async function createApp({ config, db, registry, check, observations, scheduler,
         next();
     });
 
-    const pageRoutes = createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, actions, log, webhookSources });
+    const pageRoutes = createPageRoutes({ config, db, registry, check, observations, sessions, siteLimits, actions, log, webhookSources, sharing: sharingSystem });
     // The agent layer (openvibe-shared/agent-layer): /.well-known/agent.json and the Markdown twins of the
     // public pages. Mounted before the page routes but gated to twin requests only, so a browser keeps the
     // page's own render (signed in or out) and only a twin request reaches the agent layer. The manifest

@@ -78,6 +78,22 @@ async function startNetwork({ privateKey, issuer = 'https://openvibe.network', c
             return res.end();
         }
         if (url.pathname === '/oauth/revoke') return json(200, {});
+        if (url.pathname === '/internal/identity/resolve-batch' && req.method === 'POST') {
+            let b = {}; try { b = JSON.parse(raw.toString('utf8') || '{}'); } catch { /* */ }
+            const results = {};
+            for (const subjectId of b.subject_ids || []) {
+                const u = [...st.users.values()].find((x) => x.subject === subjectId);
+                results[subjectId] = u ? { subject: { type: 'user', id: u.subject }, username: u.username, display_name: u.display_name, avatar_url: null, banned: false } : null;
+            }
+            return json(200, { results });
+        }
+        if (url.pathname === '/internal/identity/resolve' && req.method === 'GET') {
+            const name = String(url.searchParams.get('username') || '').toLowerCase();
+            const u = [...st.users.values()].find((x) => String(x.username).toLowerCase() === name);
+            if (u) return json(200, { subject: { type: 'user', id: u.subject }, username: u.username, display_name: u.display_name });
+            return json(404, { code: 'identity.not_found' });
+        }
+        if (url.pathname === '/internal/notifications/push' && req.method === 'POST') return json(200, { ok: true });
         if (url.pathname === '/oauth/token' && req.method === 'POST') {
             // The Network takes the token grant as JSON (openvibe-sdk/sso) or as a form (older clients).
             const text = raw.toString('utf8');
@@ -85,6 +101,12 @@ async function startNetwork({ privateKey, issuer = 'https://openvibe.network', c
                 ? JSON.parse(text)
                 : Object.fromEntries(new URLSearchParams(text));
             if (body.client_id !== clientId || body.client_secret !== clientSecret) return problem(json, 401, 'invalid_client', 'bad client credentials');
+            // A first-party service's own token (the sharing SDK resolves @names and sends notifications with it).
+            if (body.grant_type === 'client_credentials') {
+                const cap = String(body.scope || '').split(/\s+/).filter(Boolean);
+                const access_token = serviceAuth.signServiceToken({ iss: issuer, sub: `svc:${body.client_id}`, actor_type: 'service', aud: [body.audience || 'openvibe.network'], cap, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300, jti: `tok_${crypto.randomBytes(8).toString('hex')}` }, privateKey);
+                return json(200, { access_token, token_type: 'Bearer', expires_in: 300 });
+            }
             if (body.grant_type !== 'authorization_code') return problem(json, 400, 'unsupported_grant_type', body.grant_type);
             const c = st.codes.get(body.code);
             if (!c) return problem(json, 400, 'invalid_grant', 'unknown code');
