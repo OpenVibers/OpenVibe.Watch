@@ -27,6 +27,7 @@
 const { validate, ids: contractIds } = require('openvibe-contracts');
 const safe = require('./safe-regex');
 const { envelope } = require('./events/envelope');
+const { emitAgentStep } = require('./events/agent-step');
 
 /** Source kinds that reach out on a cadence; event and webhook sources are pushed to instead. */
 const POLLING = new Set(['http', 'feed', 'api', 'node', 'run']);
@@ -163,7 +164,7 @@ function validateView(view) {
     return view;
 }
 
-function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50, secretGrants = null, projects = null }) {
+function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox = null, source = 'watch', maxWatchesPerOwner = 50, secretGrants = null, projects = null, baseUrl = 'https://openvibe.watch' }) {
     /** A named secret the owner may not use is refused when the watch is saved (server/secret-grants.js). */
     function checkSecrets(owner, rec) {
         if (!secretGrants) return;
@@ -377,6 +378,11 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         await db.tx(async () => {
             await st.insert.run(row);
             if (outbox) await outbox.emit(envelope(watchEvent('watch.watch.created', row, owner, { name: rec.name, status: rec.status }), source, now));
+            // The agent's step (design 2026-11-07): an active watch starts as one waiting step; a watch made paused
+            // has not started, and starts when it is first resumed.
+            if (rec.status === 'active') {
+                await emitAgentStep(outbox, { id: row.id, name: rec.name, owner_sub: owner }, { topic: 'started', status: 'waiting', startedAt: t, baseUrl, now });
+            }
         });
         if (touchesEvents(rec.source)) eventSourceChanged();
         return await st.get.get(row.id);
@@ -429,6 +435,13 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             if (outbox && touched.length) {
                 await outbox.emit(envelope(watchEvent(type, row, row.owner_sub, { name: rec.name, status: rec.status, fields: touched.sort() }), source, now));
             }
+            // A watch that starts waiting is a step that starts; one that is paused or disabled stops. Another edit
+            // of a waiting watch is the same step, not a second one.
+            if (outbox && changes.status && changes.status !== row.status) {
+                const step = { id: row.id, name: rec.name, owner_sub: row.owner_sub };
+                if (rec.status === 'active') await emitAgentStep(outbox, step, { topic: 'started', status: 'waiting', startedAt: args.updated_at, baseUrl, now });
+                else if (row.status === 'active') await emitAgentStep(outbox, step, { topic: 'ended', status: 'stopped', startedAt: row.created_at, endedAt: args.updated_at, reason: `the watch is ${rec.status}`, baseUrl, now });
+            }
         });
         if (touchesEvents(current.source, rec.source)) eventSourceChanged();
         return await st.get.get(row.id);
@@ -442,6 +455,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         await db.tx(async () => {
             await db.prepare('UPDATE watches SET deleted_at = ?, updated_at = ?, next_due_at = 0 WHERE id = ?').run(t, t, row.id);
             if (outbox) await outbox.emit(envelope(watchEvent('watch.watch.removed', row, row.owner_sub, { name: row.name, status: row.status }), source, now));
+            if (row.status === 'active') await emitAgentStep(outbox, row, { topic: 'ended', status: 'stopped', startedAt: row.created_at, endedAt: t, reason: 'the watch was deleted', baseUrl, now });
         });
         if (touchesEvents(fromRow(row).source)) eventSourceChanged();
         return { id: row.id, deleted: true };
