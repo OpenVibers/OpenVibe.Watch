@@ -326,6 +326,20 @@ t('the trail carries previous_hash, and an identical body records no second obse
     assert.strictEqual((await observations(w.id)).length, 1);
 });
 
+t('a watch that fails five checks in a row pauses itself, and resuming gives it a fresh streak', async () => {
+    const w = await create(person, { source: { kind: 'http', url: `${web.origin}/broken`, format: null }, extraction: { kind: 'json' } });
+    for (let i = 0; i < 5; i += 1) await check(w.id);
+    let r = await row(w.id);
+    assert.strictEqual(r.status, 'paused');
+    assert.strictEqual(Number(r.consecutive_failures), 5);
+    const disabled = await check(w.id);
+    assert.strictEqual(disabled.disabled, true, 'a paused watch is not fetched again');
+    const resumed = await svc.registry.patch(w.id, { status: 'active' }, person);
+    assert.strictEqual(resumed.status, 'active');
+    assert.strictEqual(Number(resumed.consecutive_failures), 0, 'the resume is a fresh streak');
+    assert.ok(resumed.next_due_at > Date.now());
+});
+
 t('done', async () => { await web.close(); await svc.stop(); });
 
 t.run();

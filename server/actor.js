@@ -4,7 +4,7 @@
  *
  *   const actor = createActorTasks(client, { baseUrl });       // client: openvibe-sdk/core createClient with Watch's token
  *   await actor.create({ subjectId, task, budgetUsd, idempotencyKey })  → { id, state }
- *   await actor.runAgent({ subjectId, agentId, input })                 → { id, state }
+ *   await actor.runAgent({ subjectId, agentId, input, watchId, triggerId }) → { id, state }
  *
  * POST <actor>/api/v1/tasks with Watch's own token (actor.task.create, audience openvibe.actor), or
  * POST <actor>/api/v1/me/agents/:agentId/run (actor.agent.run), with the owner in
@@ -24,8 +24,10 @@ function createActorTasks(client, { baseUrl }) {
         const out = await post('/api/v1/tasks', subjectId, json);
         return { id: out && out.id, state: out && out.state };
     }
-    async function runAgent({ subjectId, agentId, input }) {
-        const out = await post(`/api/v1/me/agents/${encodeURIComponent(agentId)}/run`, subjectId, { input });
+    async function runAgent({ subjectId, agentId, input, watchId = null, triggerId = null }) {
+        const out = await post(`/api/v1/me/agents/${encodeURIComponent(agentId)}/run`, subjectId, {
+            input, ...(watchId ? { watch_id: watchId } : {}), ...(triggerId ? { trigger_id: triggerId } : {}),
+        });
         return { id: out && (out.task_id || (out.task && out.task.id) || out.id), state: out && out.state };
     }
     return { create, runAgent };

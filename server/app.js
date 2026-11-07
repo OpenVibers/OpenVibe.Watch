@@ -47,6 +47,7 @@ const TEXT_INDEX = [
     '',
     'GET  /api/v1/watches, /api/v1/watches/:id                                      (watch.watch.read)',
     'POST/PATCH/DELETE /api/v1/watches[/:id], POST /api/v1/watches/:id/pause, /resume (watch.watch.manage)',
+    'POST /api/v1/watches/:id/schedule                                             (watch.watch.manage)',
     'GET  /api/v1/watches/:id/observations, /api/v1/watches/:id/checks               (watch.observation.read)',
     'POST /api/v1/watches/:id/check                                                 (watch.check.run)',
     'GET  /api/health, /api/ready, /release.json',

@@ -26,6 +26,7 @@
  */
 const { validate, ids: contractIds } = require('openvibe-contracts');
 const safe = require('./safe-regex');
+const cron = require('./cron');
 const { envelope } = require('./events/envelope');
 const { emitAgentStep } = require('./events/agent-step');
 
@@ -150,6 +151,11 @@ function validateRequest(body, { create = false } = {}) {
  * the same shape OpenVibe.Sources uses for a failing source). 0 for a source that never polls.
  */
 function nextDue(rec, at, { failures = 0, maxBackoffMs = Infinity } = {}) {
+    // A routine: the next occurrence of its cron, in its own timezone. A failed check still waits for the
+    // next occurrence (there is no page to back off from); an unknown or empty rule never runs.
+    if (rec && rec.schedule && rec.schedule.cron) {
+        try { return cron.next(rec.schedule.cron, rec.schedule.timezone || 'UTC', at) || 0; } catch { return 0; }
+    }
     if (!rec || !rec.cadence || !rec.cadence.every_sec) return 0;
     const every = rec.cadence.every_sec * 1000;
     if (failures > 0) return at + Math.min(every * 2 ** Math.min(failures - 1, 10), Math.max(maxBackoffMs, every));
@@ -228,10 +234,11 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         project_env: (v) => v,
     };
 
-    /** The stored record, request-shaped (what a PATCH merges into). */
+    /** The stored record, request-shaped (what a PATCH merges into). `schedule` is kept out of the
+     *  enumerable shape: watch.watch-request@1 does not know it, but the check engine and nextDue read it. */
     function fromRow(row) {
         if (!row) return null;
-        return {
+        const out = {
             id: row.id,
             project_id: row.project_id,
             ...(row.project_env ? { project_env: row.project_env } : {}),
@@ -248,12 +255,14 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             budget: parse(row.budget) || {},
             retention: parse(row.retention) || {},
         };
+        Object.defineProperty(out, 'schedule', { value: parse(row.schedule), enumerable: false });
+        return out;
     }
 
     /** What the operator sees about a watch's runtime, never invented: counts and times only. */
     function health(row) {
         const iso = (v) => (v == null ? null : new Date(v).toISOString());
-        const polls = row.cadence != null;
+        const polls = row.cadence != null || row.schedule != null;
         let status;
         if (row.status === 'paused') status = 'paused';
         else if (row.status === 'disabled') status = 'disabled';
@@ -419,7 +428,9 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         }
         if (!sets.length) return await st.get.get(row.id);
         // A changed watch gets a fresh cadence: re-arm from now, so editing never fires late work.
-        const rec = { ...current, ...changes };
+        const rec = { ...current, ...changes, schedule: parse(row.schedule) };
+        // A resume is a fresh start: the failures that paused a routine (or that a person paused around) begin again.
+        if (rec.status === 'active' && row.status !== 'active') sets.push('consecutive_failures = 0', 'not_before = 0');
         args.next_due_at = rec.status === 'active' ? arm(rec, args.updated_at) : 0;
         sets.push('next_due_at = @next_due_at');
         // The first resume is the arm: a watch the site tested is paused with no armed_at until now.
@@ -445,6 +456,23 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         });
         if (touchesEvents(current.source, rec.source)) eventSourceChanged();
         return await st.get.get(row.id);
+    }
+
+    /** Save the routine's cron (Actor's route after it creates the subscription). The row stays paused until resumed. */
+    async function setSchedule(id, schedule, principal) {
+        const row = await get(id, principal);
+        if (!row) return null;
+        const cronExpr = String((schedule && schedule.cron) || '').trim();
+        const timezone = String((schedule && schedule.timezone) || 'UTC').trim() || 'UTC';
+        const verdict = cron.validate(cronExpr, timezone);
+        if (!verdict.valid) throw new RegistryError(verdict.error, 'watch.invalid');
+        const rec = { ...fromRow(row), schedule: { cron: cronExpr, timezone } };
+        const at = now();
+        const next = row.status === 'active' ? nextDue(rec, at, {}) : 0;
+        await db.query(`UPDATE watches SET schedule = $2, next_due_at = $3, armed_at = COALESCE(armed_at, $4),
+            updated_at = $4, updated_by = $5 WHERE id = $1 AND deleted_at IS NULL`,
+        [row.id, JSON.stringify(rec.schedule), next, at, ownerOf(principal)]);
+        return { id: row.id, schedule: rec.schedule, next_due_at: next ? new Date(next).toISOString() : null };
     }
 
     /** Soft delete: the rows an observation refers to stay resolvable. */
@@ -482,7 +510,8 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
 
     /** Active watches whose turn has come, oldest due first (the scheduler's queue). */
     async function due(limit) {
-        return await db.prepare(`SELECT id FROM watches WHERE status = 'active' AND deleted_at IS NULL AND cadence IS NOT NULL
+        return await db.prepare(`SELECT id FROM watches WHERE status = 'active' AND deleted_at IS NULL
+            AND (cadence IS NOT NULL OR schedule IS NOT NULL)
             AND next_due_at <= @now AND not_before <= @now ORDER BY next_due_at, id LIMIT @limit`).all({ now: now(), limit });
     }
 
@@ -497,7 +526,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         };
     }
 
-    return { validate: validateRequest, validateView, view, health, fromRow, create, get, all, patch, remove, due, onEventSourceChange: (fn) => { onEventSource = fn; } };
+    return { validate: validateRequest, validateView, view, health, fromRow, create, get, all, patch, setSchedule, remove, due, onEventSourceChange: (fn) => { onEventSource = fn; } };
 }
 
 module.exports = { createRegistry, validateRequest, validateView, RegistryError, defaultName, nextDue, POLLING, PUSHED, RUN_STATES, STATUSES };

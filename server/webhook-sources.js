@@ -319,6 +319,9 @@ function createWebhookSources({ db, registry, check, config, now = () => Date.no
         const row = /^wch_[0-9A-HJKMNP-TV-Z]{26}$/.test(id) ? await st.watch.get(id) : null;
         const source = row ? (typeof row.source === 'string' ? JSON.parse(row.source) : row.source) : null;
         if (!row || !source || source.kind !== 'webhook') return problem(res, 404, 'watch.not_found', 'no webhook watch at this address');
+        // A routine uses the same stored address so the create stays inside watch.watch@1's source kinds; it is not
+        // a page anyone can push to, and a delivery here must not run the person's agent out of turn.
+        if (row.schedule) return problem(res, 404, 'watch.not_found', 'this address belongs to a routine, not a webhook watch');
         const kept = await st.get.get(id) || {};
         const provider = kept.provider || null;
         if (!verified(kept.secret || null, raw, req.headers, { provider, now: now() })) {
