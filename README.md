@@ -5,7 +5,7 @@
 > the site's own ETag will do.
 
 **Status:** alpha (plan T18). The registry, the check engine, the pull carriers (`http`, `feed`, `api`), the push
-sources (OpenVibe events and signed webhooks), Node probes from the owner's own machine, the actions (a notification,
+sources (OpenVibe events and signed webhooks), Link probes from the owner's own machine, the actions (a notification,
 an event, a webhook, an Actor task or agent run, a Run job, a Codes task) and the public site (sign-in, seven starting
 points, forms) exist. The Run rung (browser or code polling through OpenVibe.Run) and the `ai` extraction do not
 yet.  
@@ -21,7 +21,7 @@ condition, action, budget, retention".
 Sources ingests the sources a product chose; Watch is the place a **person or an agent** defines
 their own observation: "this page's price", "this feed's latest release", "this API's stock", and
 the condition on it. Sources performs permitted structured ingestion; **Watch owns user-defined
-persistent observations and conditions**; Run executes expensive browser/code checks; Node observes
+persistent observations and conditions**; Run executes expensive browser/code checks; Link observes
 local/LAN things; Actor interprets and acts; Events transports the trigger.
 
 A Watch is a first-class OpenVibe resource (`watch.watch@1`), so products compose it instead of
@@ -149,11 +149,11 @@ This release carries the pull rungs and event sources:
 | `event` | delivered by OpenVibe.Events (see [Event sources](#event-sources)) | implemented |
 | `webhook` | a signed POST to `/hooks/<watch id>` (see [Webhook sources](#webhook-sources)) | implemented |
 | `run` | browser/code polling through OpenVibe.Run | step 6 |
-| `node` | a probe from the owner's own machine through OpenVibe.Bot and OpenVibe.Node (see below) | implemented (step 7) |
+| `node` | a probe from the owner's own machine through OpenVibe.Bot and OpenVibe Link (see below) | implemented (step 7) |
 
-**Node sources** (plan T18 step 7, contracts 0.167.0, [server/carriers/node.js](server/carriers/node.js)): `{ kind: 'node', node_id: 'dev_…', probe: { target, timeout_s } }`. The check runs from the owner's own machine:
+**Link sources** (plan T18 step 7, contracts 0.167.0, [server/carriers/node.js](server/carriers/node.js)): `{ kind: 'node', node_id: 'dev_…', probe: { target, timeout_s } }`. The check runs from the owner's own machine:
 - **The call**: Watch asks OpenVibe.Bot (`WATCH_BOT_URL`, default `http://127.0.0.1:4630`) with its own token (`bot.computer.control`) and the owner in `X-OV-Subject`. Bot answers only for that person's machine, only where they turned on "Let my watches check things from this computer", and Watch may send nothing but the read-only `probe`.
-- **Targets**: the machine's OpenVibe Node reaches only its own network (private, loopback or link-local addresses).
+- **Targets**: the machine's OpenVibe Link reaches only its own network (private, loopback or link-local addresses).
 - **http(s) targets**: the answer's body is extracted like a page, and a status other than 200/203 is an `http_error`.
 - **tcp targets**: the document is `{ open, status: 'up' | 'down', ms }`.
 - **Owners**: an agent-owned watch is never probed (`node_person_only`).
@@ -555,7 +555,7 @@ Reporting: [SECURITY.md](SECURITY.md). The rules the code keeps:
 
 - structured source ingestion for publication (OpenVibe.Sources' registry and adapters): Watch
   observes what one person or agent asked for, not what a product publishes
-- expensive browser/code execution (OpenVibe.Run, step 6) and local/LAN probes (OpenVibe.Node,
+- expensive browser/code execution (OpenVibe.Run, step 6) and local/LAN probes (OpenVibe Link,
   step 7) — Watch asks them, they run
 - interpreting a trigger and acting on it (OpenVibe.Actor, OpenVibe.Codes, actions = step 4)
 - delivery of a notification (OpenVibe.Network consumes `watch.watch.triggered`)
