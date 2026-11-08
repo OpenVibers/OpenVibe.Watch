@@ -37,7 +37,10 @@
  *                  else, including an allowance spent for the day, is retried on the backoff. It needs a person as
  *                  owner: an agent- or service-owned watch is `skipped`.
  *   actor-agent    runs one of the owner's personal agents on Actor with a note and bounded firing context.
- *                  A missing agent or allowance refusal fails this firing; a service error retries.
+ *                  A missing agent or allowance refusal fails this firing; a service error retries. When Actor
+ *                  answers 409 actor.trigger.paused or actor.trigger.done, the routine is over (a goal reached its
+ *                  check, or its runs, money or deadline ran out): the watch pauses itself and the action is
+ *                  `skipped` — only the person's own token may pause a watch for them, and Watch does not have it.
  *   run-job        one OpenVibe.Run job for the owner in the watch's project (server/run-jobs.js): the action's
  *                  run.job-create-request@1 fields, with the firing under args[firing_arg] when it names one. Watch
  *                  submits as itself, the owner in X-OV-Subject and the project in X-OV-Project (project delegation,
@@ -229,6 +232,9 @@ function createActions({ db, config, notifications = null, post = null, actor = 
             COUNT(*) FILTER (WHERE state = 'sent') AS sent FROM action_runs`),
         recent: db.prepare(`SELECT check_run_id, action_index, kind, state, attempts, last_error, request, created_at, finished_at FROM action_runs
             WHERE watch_id = ? ORDER BY rid DESC LIMIT ?`),
+        // A routine that is over stops its own subscription: Actor answered the delivery with the code that says
+        // no run will happen again (a person's token, not Watch's, is what Actor may pause a watch with).
+        endRoutine: db.prepare("UPDATE watches SET status = 'paused', next_due_at = 0, updated_at = ? WHERE id = ? AND status = 'active' AND deleted_at IS NULL"),
     };
 
     /** One row per action of the watch, for the run that fired. Call inside the run's transaction. */
@@ -357,6 +363,13 @@ function createActions({ db, config, notifications = null, post = null, actor = 
             });
             return { state: 'sent', error: `Actor task ${task.id || '(no id)'}` };
         } catch (err) {
+            // The routine is over (a goal reached its check, or Actor paused it): nothing will run again, so this
+            // subscription stops checking. Actor cannot pause a watch for the person (only the person's own token
+            // reaches Watch), so Watch stops itself on the first delivery it refuses for that reason.
+            if (err && err.status === 409 && /^actor\.trigger\.(paused|done)$/.test(String(err.code || ''))) {
+                await st.endRoutine.run(now(), row.watch_id);
+                return { state: 'skipped', error: `watch.action_routine_over: ${err.code}` };
+            }
             if (err && err.status === 404 && err.code === 'actor.agent.not_found') return { state: 'failed', error: `watch.action_refused: ${err.code}: this agent was not found for the watch owner` };
             if (err && (err.status === 429 || err.status === 400 || err.status === 422 || (err.status === 403 && /(?:limit|free.tier|over_tier)/i.test(String(err.code || ''))))) {
                 return { state: 'failed', error: `watch.action_refused: ${err.code || err.status}: ${String(err.detail || err.message || '').slice(0, 200)}` };

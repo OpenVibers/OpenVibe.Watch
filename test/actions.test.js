@@ -454,6 +454,33 @@ t('actor-agent sends note and bounded firing context, records its task, and clas
     actorMode = 'ok';
 });
 
+t('a routine that is over stops its own subscription, without a person\'s token', async () => {
+    // Actor answers a delivery for a trigger that ended with actor.trigger.paused / actor.trigger.done. Only the
+    // person's own token may pause a watch for them (Actor#325's rule), so Watch stops itself on that answer.
+    const w = await create(person, { name: 'a goal that finished', action: [{ kind: 'actor-agent', agent_id: agentId }] });
+    const over = async (code) => { throw Object.assign(new Error('refused'), { status: 409, code }); };
+    const original = actor.runAgent;
+    try {
+        actor.runAgent = over.bind(null, 'actor.trigger.done');
+        await fire(w);
+        const r = await svc.actions.tick();
+        const row = (await acts(w.id))[0];
+        assert.deepStrictEqual([row.state, r.skipped], ['skipped', 1], 'not a failure, and not retried');
+        assert.match(row.last_error, /watch\.action_routine_over: actor\.trigger\.done/);
+        const after = await svc.registry.get(w.id, person);
+        assert.strictEqual(after.status, 'paused', 'the subscription stopped checking');
+
+        const paused = await create(person, { name: 'a routine paused by its person', action: [{ kind: 'actor-agent', agent_id: agentId }] });
+        actor.runAgent = over.bind(null, 'actor.trigger.paused');
+        await fire(paused);
+        await svc.actions.tick();
+        assert.strictEqual((await svc.registry.get(paused.id, person)).status, 'paused');
+        assert.strictEqual((await acts(paused.id))[0].state, 'skipped');
+    } finally {
+        actor.runAgent = original;
+    }
+});
+
 t('readiness counts the queue, and the watch page says what the watch did when it fired', async () => {
     const st = await svc.actions.status();
     assert.strictEqual(st.enabled, true);
