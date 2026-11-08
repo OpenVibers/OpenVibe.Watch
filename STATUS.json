@@ -60,7 +60,7 @@
   ],
   "notYet": [
     "no check has run against a real external site in production yet: on 2026-10-10 nobody had created a watch (the tests use stub sites only)",
-    "the event and webhook carriers (step 5), the Run rung (step 6), Node probes (step 7) and the actions (step 4): a watch of such a kind is accepted but never fetched",
+    "the event and webhook carriers (step 5), the Run rung (step 6), Link probes (step 7) and the actions (step 4): a watch of such a kind is accepted but never fetched",
     "an ai extraction is not a check (step 10); such a watch is recorded skipped and nothing is fetched",
     "the site offers only page/price/feed/json watches: the kinds and the AI reading above are not in the form",
     "notifications are the watch.watch.triggered event OpenVibe.Network turns into WATCH_TRIGGERED; no other action is dispatched"

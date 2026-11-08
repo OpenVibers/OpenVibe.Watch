@@ -1,7 +1,7 @@
 'use strict';
 /**
  * The node carrier (plan T18 step 7): a check made FROM the owner's own machine, of something on that machine's own
- * network (a NAS's status page, a printer, a port on the router), through OpenVibe.Bot and the machine's OpenVibe Node
+ * network (a NAS's status page, a printer, a port on the router), through OpenVibe.Bot and the machine's OpenVibe Link
  * (the computer plugin's read-only `probe`). Watch never reaches the person's network itself.
  *
  *   source: { kind: 'node', node_id: 'dev_…', probe: { target: 'http(s)://…' | 'tcp://host:port', timeout_s? } }

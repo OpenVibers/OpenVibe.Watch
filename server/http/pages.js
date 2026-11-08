@@ -494,7 +494,7 @@ ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="v
         const whatBlock = template === 'lan'
             ? html`<fieldset><legend>What to watch</legend>
 ${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. The NAS">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the address.' })}
-${field('Your machine', html`<input type="text" id="${idOf('machine')}" name="machine" value="${fields.machine}" maxlength="30" placeholder="dev_…" required>`, { name: 'machine', error: errors.machine, hint: html`A computer on that network with OpenVibe Node and its computer plugin: copy its id from <a href="https://openvibe.bot/machines">openvibe.bot/machines</a>, where you also turn on “Let my watches check things from this computer”.` })}
+${field('Your machine', html`<input type="text" id="${idOf('machine')}" name="machine" value="${fields.machine}" maxlength="30" placeholder="dev_…" required>`, { name: 'machine', error: errors.machine, hint: html`A computer on that network with OpenVibe Link and its computer plugin: copy its id from <a href="https://openvibe.bot/machines">openvibe.bot/machines</a>, where you also turn on “Let my watches check things from this computer”.` })}
 ${field('Address and port', html`<input type="text" id="${idOf('lan_address')}" name="lan_address" value="${fields.lan_address}" maxlength="260" placeholder="192.168.1.20:80" required>`, { name: 'lan_address', error: errors.lan_address, hint: 'On your own network only (a private or local address): your machine checks that it accepts a connection.' })}
 </fieldset>`
             : template === 'event'
@@ -548,7 +548,7 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
     const newWatch = (q) => `/watches/new?${new URLSearchParams(q)}`;
     // Feeds anyone may watch, each checked to answer with a feed: what a person most often wants told about.
     const FEEDS = [
-        { title: 'New releases of the OpenVibe Node', detail: 'The agent that runs on robots and computers, from GitHub.', url: 'https://github.com/OpenVibers/OpenVibe.Node/releases.atom', where: 'GitHub' },
+        { title: 'New releases of the OpenVibe Link', detail: 'The agent that runs on robots and computers, from GitHub.', url: 'https://github.com/OpenVibers/OpenVibe.Node/releases.atom', where: 'GitHub' },
         { title: 'New Node.js releases', detail: 'Every Node.js release, current and LTS.', url: 'https://nodejs.org/en/feed/releases.xml', where: 'nodejs.org' },
         { title: 'New remote jobs on OpenVibe.Work', detail: 'Every new remote listing OpenVibe.Work gathers.', url: 'https://openvibe.work/jobs.atom?remote=true', where: 'OpenVibe.Work' },
     ];
@@ -1245,7 +1245,7 @@ ${watchForm({ template, fields, errors, action: `/watches/${id}/edit`, submit: '
 <li><strong>A feed</strong> — an RSS or Atom feed is read before the page it describes, and the feed's own conditional headers apply.</li>
 <li><strong>An API</strong> — a JSON endpoint is read the same way, mapped by the watch itself.</li>
 <li><strong>A page</strong> — the page's text is read, as the whole body or one element.</li>
-<li><strong>Your own computer</strong> — for something on your home or office network (a router, a NAS, a printer page), one read-only check from your own machine through the OpenVibe Node, only where you turned that on for it.</li>
+<li><strong>Your own computer</strong> — for something on your home or office network (a router, a NAS, a printer page), one read-only check from your own machine through the OpenVibe Link, only where you turned that on for it.</li>
 <li><strong>An expensive browser check through OpenVibe.Run</strong> — the last resort. It waits for a browser worker, so a <code>run</code> watch is accepted but not checked yet, and says so on its page.</li>
 </ol>
 <h2>The manners</h2>
@@ -1280,7 +1280,7 @@ ${table(['State', 'In plain words'], [
 <li>A value the source did not state is <code>null</code>; Watch never invents one, and an absent value stays absent.</li>
 <li>A failed check is a recorded state, never a silent skip; a failed check records no observation.</li>
 <li>A site that is unavailable is retried with backoff, not hammered.</li>
-<li>Run and an AI reading are not offered in the form, because Watch will not pretend to check what it cannot. Event, webhook and Node watches are.</li>
+<li>Run and an AI reading are not offered in the form, because Watch will not pretend to check what it cannot. Event, webhook and Link watches are.</li>
 </ul>
 <p><a href="/watches/new?template=page">Start a watch</a> · <a href="/">Back home</a></p>`,
     }));
