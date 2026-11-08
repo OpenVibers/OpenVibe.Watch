@@ -22,7 +22,7 @@
  */
 const crypto = require('crypto');
 const express = require('express');
-const { createSsoClient, failurePage } = require('openvibe-sdk/sso');
+const { createSsoClient, failurePage, withParam } = require('openvibe-sdk/sso');
 const cache = require('openvibe-shared/cache-policy');
 
 const SESSION_COOKIE = 'watch_session';
@@ -164,8 +164,9 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
 
         r.get('/login', (req, res) => {
             const next = sanitizeNext(req.query.next, config);
-            const started = sdkSso.authorizeUrl();
-            res.cookie(FLOW_COOKIE, JSON.stringify({ state: started.state, verifier: started.verifier, next }), flowCookie());
+            const silent = !!req.query.silent && req.query.silent !== '0';
+            const started = sdkSso.authorizeUrl({ silent });
+            res.cookie(FLOW_COOKIE, JSON.stringify({ state: started.state, verifier: started.verifier, next, silent }), flowCookie());
             res.set('Cache-Control', cache.htmlHeaders({ private: true }));
             return res.redirect(started.url);
         });
@@ -179,6 +180,7 @@ function createSso({ config, keys, sessions, fetchImpl = globalThis.fetch, now =
             if (req.query.error) {
                 // An explicit answer from the Network (access_denied, login_required, …) is not retried by itself.
                 res.clearCookie(RETRY_COOKIE, { ...cookieBase(), path: '/auth' });
+                if (flow?.silent && sameString(req.query.state, flow.state)) return res.redirect(withParam(next, 'sso', 'none'));
                 log.warn(`[sso] sign-in not completed: ${String(req.query.error).slice(0, 120)}`);
                 return res.status(400).type('html').send(failurePage({
                     siteName: 'OpenVibe.Watch',

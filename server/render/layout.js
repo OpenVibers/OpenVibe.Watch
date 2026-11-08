@@ -57,6 +57,7 @@ function renderPage(o) {
         appBar: [{ label: 'Home', href: '/', icon: 'fa-house' }, { label: 'Watches', href: '/watches', icon: 'fa-bell' }, { label: 'How it checks', href: '/how-it-works', icon: 'fa-circle-info' }],   // phones: the bottom tab bar (Shared 4.20)
         history: { type: 'page', title: o.title || SITE_NAME },
         sessionUrl: '/auth/me',
+        silentLogin: '/auth/login?silent=1&next={url}',
         loginUrl: '/auth/login?next={path}',
         logoutUrl: '/auth/logout?next={path}',
         notificationsRealtime: true,

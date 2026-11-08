@@ -65,6 +65,22 @@ t('the signed-out pages say what Watch is and ask for a sign-in', async () => {
     assert.doesNotMatch(how.text, /Not built yet/);
 });
 
+t('silent first visit: prompt=none and a guest returns without a login form', async () => {
+    const started = await svc.get('/auth/login?silent=1&next=%2Fwatches%3Fview%3Dall%23latest');
+    const u = new URL(started.location);
+    assert.strictEqual(u.searchParams.get('prompt'), 'none');
+    assert.strictEqual(u.searchParams.get('code_challenge_method'), 'S256');
+    const flow = started.headers.getSetCookie().map(c => c.split(';')[0]).join('; ');
+    const guest = await svc.get('/auth/callback?error=login_required&state='+u.searchParams.get('state'), { cookie: flow });
+    assert.strictEqual(guest.status, 302);
+    assert.strictEqual(guest.location, '/watches?view=all&sso=none#latest');
+    assert.ok(!guest.headers.getSetCookie().some(c => c.startsWith('watch_session=')));
+    const badState = await svc.get('/auth/callback?error=login_required&state=wrong', { cookie: flow });
+    assert.strictEqual(badState.status, 400);
+    const html = require('../server/render/layout').renderPage({ config: svc.config, body: '' });
+    assert.ok(html.includes('/auth/login?silent=1&next={url}'));
+});
+
 t('sign-in with the stand-in Network: PKCE, a session, and /auth/me', async () => {
     const who = svc.network.addUser('ada');   // same username, distinct subject for this flow test
     who.avatar_url = 'https://openvibe.media/o/med_01JABCDEFGHJKMNPQRSTVWXYZ0';
