@@ -513,6 +513,21 @@ t('an alert leaves out the source and fetched lines when the watch stored neithe
     assert.deepStrictEqual(p.rich_content.evidence, { before: null, after: 'v1', source_url: null, fetched_at: null });
 });
 
+t('a feed entry or a named record reads as its title and summary, never as JSON', () => {
+    const { notificationFor } = require('../server/actions');
+    const at = (value, previousValue) => notificationFor({
+        config: { baseUrl: 'https://openvibe.watch' },
+        watch: { id: 'wch_01JAB2C3D4E5F6G7H8J9K0MNPQ', name: 'Jobs', source: { kind: 'event', pattern: 'work.job.posted' } },
+        run: { id: 'ckr_01JAB2C3D4E5F6G7H8J9K0MNPQ' }, action: {}, value, previousValue, observedAt: null,
+    }).message;
+    const entry = { identity: 'https://openvibe.work/jobs/job_1', kind: 'entry', title: '(Senior) Product Engineer at sustaind GmbH', link: 'https://openvibe.work/jobs/job_1', summary: 'Bielefeld · Remote' };
+    assert.strictEqual(at(entry), '(Senior) Product Engineer at sustaind GmbH — Bielefeld · Remote');
+    assert.strictEqual(at({ name: 'Front door', state: 'open' }), 'Front door');
+    assert.strictEqual(at([entry, entry]), '2 items, first: (Senior) Product Engineer at sustaind GmbH');
+    assert.strictEqual(at({ price: 12 }), '{"price":12}', 'a shape with no name stays as it is');
+    assert.strictEqual(at({ title: 'B' }, { title: 'A' }), 'B (was A)');
+});
+
 t('done', async () => { await web.close(); await svc.stop(); });
 
 t.run();
