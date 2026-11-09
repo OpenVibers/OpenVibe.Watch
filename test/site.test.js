@@ -283,7 +283,7 @@ t('the network template: a device at home stops answering, checked from the pers
     assert.strictEqual(form.status, 200);
     assert.match(form.text, /name="machine"/);
     assert.match(form.text, /name="lan_address"/);
-    assert.match(form.text, /openvibe\.bot\/machines/);
+    assert.match(form.text, /openvibe\.link\/machines/);
     const made = await create({ template: 'lan', name: 'The NAS', machine: 'dev_01M4XTHNFFAWWZQHB4XTMSN1YB', lan_address: '192.168.1.20:5000', cadence: '3600', notify: 'on' });
     assert.strictEqual(made.status, 303, made.text);
     const w = (await request(svc.base, 'GET', `/api/v1/watches/${indexOf(made)}`, { token: ME })).body.watch;
@@ -295,7 +295,7 @@ t('the network template: a device at home stops answering, checked from the pers
     assert.match(edit.text, /value="192\.168\.1\.20:5000"/);
     const bad = await create({ template: 'lan', machine: 'nope', lan_address: 'not an address', cadence: '3600' });
     assert.strictEqual(bad.status, 422);
-    assert.match(bad.text, /openvibe\.bot\/machines \(dev_/);
+    assert.match(bad.text, /openvibe\.link\/machines \(dev_/);
     assert.match(bad.text, /address and port/);
 });
 
