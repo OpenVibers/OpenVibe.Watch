@@ -320,7 +320,7 @@ function createPageRoutes(ctx) {
             const name = String(fields.name == null ? '' : fields.name).trim();
             if (name.length > 120) errors.name = 'A name can be at most 120 characters.';
             const machine = String(fields.machine || '').trim();
-            if (!/^dev_[0-9A-HJKMNP-TV-Z]{26}$/.test(machine)) errors.machine = 'Give your machine\'s id from openvibe.bot/machines (dev_ followed by 26 characters).';
+            if (!/^dev_[0-9A-HJKMNP-TV-Z]{26}$/.test(machine)) errors.machine = 'Give your machine\'s id from openvibe.link/machines (dev_ followed by 26 characters).';
             const address = String(fields.lan_address || '').trim();
             if (!/^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]{1,253}):\d{1,5}$/.test(address) || Number(address.split(':').pop()) > 65535) errors.lan_address = 'Give the device\'s address and port, for example 192.168.1.20:80 or nas.local:5000.';
             const cadenceSec = INT(fields.cadence, 3600);
@@ -494,7 +494,7 @@ ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="v
         const whatBlock = template === 'lan'
             ? html`<fieldset><legend>What to watch</legend>
 ${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. The NAS">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the address.' })}
-${field('Your machine', html`<input type="text" id="${idOf('machine')}" name="machine" value="${fields.machine}" maxlength="30" placeholder="dev_…" required>`, { name: 'machine', error: errors.machine, hint: html`A computer on that network with OpenVibe Link and its computer plugin: copy its id from <a href="https://openvibe.bot/machines">openvibe.bot/machines</a>, where you also turn on “Let my watches check things from this computer”.` })}
+${field('Your machine', html`<input type="text" id="${idOf('machine')}" name="machine" value="${fields.machine}" maxlength="30" placeholder="dev_…" required>`, { name: 'machine', error: errors.machine, hint: html`A computer on that network with OpenVibe Link and its computer plugin: copy its id from <a href="https://openvibe.link/machines">openvibe.link/machines</a>, where you also turn on “Let my watches check things from this computer”.` })}
 ${field('Address and port', html`<input type="text" id="${idOf('lan_address')}" name="lan_address" value="${fields.lan_address}" maxlength="260" placeholder="192.168.1.20:80" required>`, { name: 'lan_address', error: errors.lan_address, hint: 'On your own network only (a private or local address): your machine checks that it accepts a connection.' })}
 </fieldset>`
             : template === 'event'
@@ -524,7 +524,7 @@ ${checkbox('Notify me when it fires', { name: 'notify', checked: fields.notify =
 ${checkbox('Run one of my agents on OpenVibe.Actor', { name: 'agent_on', checked: fields.agent_on === 'on', hint: 'When the condition fires, Watch gives your agent the before and after values, the source address, the time it was fetched and a link to this watch.' })}
 ${field('Agent id', html`<input type="text" id="${idOf('agent_id')}" name="agent_id" value="${fields.agent_id}" maxlength="30" placeholder="agt_…">`, { name: 'agent_id', error: errors.agent_id, hint: 'Find the id on your agent’s OpenVibe.Actor page. Required when running an agent.' })}
 ${field('Note for the agent (optional)', html`<textarea id="${idOf('agent_note')}" name="agent_note" maxlength="2000" rows="3">${fields.agent_note}</textarea>`, { name: 'agent_note', error: errors.agent_note })}
-${checkbox('Start a coding task on my own machine (OpenVibe.Codes)', { name: 'codes_on', checked: fields.codes_on === 'on', hint: 'When the condition fires, OpenVibe.Codes runs the task on your machine (add it on openvibe.bot/machines and start one task on openvibe.codes/run first), with the before and after values, the source address, the time it was fetched and a link to this watch. You get the summary and the patch on its page.' })}
+${checkbox('Start a coding task on my own machine (OpenVibe.Codes)', { name: 'codes_on', checked: fields.codes_on === 'on', hint: 'When the condition fires, OpenVibe.Codes runs the task on your machine (add it on openvibe.link/machines and start one task on openvibe.codes/run first), with the before and after values, the source address, the time it was fetched and a link to this watch. You get the summary and the patch on its page.' })}
 ${field('Repository', html`<input type="url" id="${idOf('codes_repo')}" name="codes_repo" value="${fields.codes_repo}" maxlength="300" placeholder="https://github.com/you/project">`, { name: 'codes_repo', error: errors.codes_repo })}
 ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="codes_brief" maxlength="6000" rows="3" placeholder="The dependency in the value changed: update it and run the tests.">${fields.codes_brief}</textarea>`, { name: 'codes_brief', error: errors.codes_brief })}
 </fieldset>
@@ -548,7 +548,7 @@ ${field('The coding task', html`<textarea id="${idOf('codes_brief')}" name="code
     const newWatch = (q) => `/watches/new?${new URLSearchParams(q)}`;
     // Feeds anyone may watch, each checked to answer with a feed: what a person most often wants told about.
     const FEEDS = [
-        { title: 'New releases of the OpenVibe Link', detail: 'The agent that runs on robots and computers, from GitHub.', url: 'https://github.com/OpenVibers/OpenVibe.Node/releases.atom', where: 'GitHub' },
+        { title: 'New releases of the OpenVibe Link', detail: 'The agent that runs on robots and computers, from GitHub.', url: 'https://github.com/OpenVibers/OpenVibe.Link/releases.atom', where: 'GitHub' },
         { title: 'New Node.js releases', detail: 'Every Node.js release, current and LTS.', url: 'https://nodejs.org/en/feed/releases.xml', where: 'nodejs.org' },
         { title: 'New remote jobs on OpenVibe.Work', detail: 'Every new remote listing OpenVibe.Work gathers.', url: 'https://openvibe.work/jobs.atom?remote=true', where: 'OpenVibe.Work' },
     ];
