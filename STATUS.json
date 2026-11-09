@@ -9,7 +9,7 @@
   "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
   "contracts": "openvibe-contracts v0.338.0 (watch.rate.* events; actor-agent requires v0.143.0)",
   "sdk": "openvibe-sdk v0.94.0",
-  "shared": "openvibe-shared v4.155.0",
+  "shared": "openvibe-shared v4.157.0",
   "capabilities": [
     "watch.watch.read",
     "watch.watch.manage",
@@ -83,5 +83,5 @@
     "the public site: Network sign-in (PKCE S256, web_sessions with only the token hash), server-rendered pages complete without JavaScript, the four create templates, watch management, observation history and check runs, how-it-works and the changelog, robots/sitemap/llms.txt",
     "provider-rate evidence (plan P6, WATCH_PROVIDER_RATES off by default): DeepInfra and Featherless AI official price documents parsed into integer nano-USD-per-million supply rate observations (D1), a pending Watch change when a rate differs, and a person's approval recorded as evidence only — no rate card is written and nothing is billable"
   ],
-  "updated": "2026-11-08"
+  "updated": "2026-11-09"
 }
