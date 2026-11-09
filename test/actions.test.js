@@ -133,7 +133,8 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     assert.strictEqual(p.subjectId, person.sub);
     assert.deepStrictEqual([p.type, p.service, p.category, p.priority], ['WATCH_TRIGGERED', 'watch', 'service', 'high']);
     assert.strictEqual(p.title, '“Widget price” fired');
-    assert.match(p.message, /^7\.50 \(was 19\.99\) · from http:\/\/127\.0\.0\.1:\d+\/price · fetched \d{4}-\d{2}-\d{2}T/);
+    assert.match(p.message, /^7\.50 \(was 19\.99\) · from http:\/\/127\.0\.0\.1:\d+\/price · fetched [A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} UTC$/, 'a time a person reads');
+    assert.match(p.rich_content.evidence.fetched_at, /^\d{4}-\d{2}-\d{2}T/, 'the exact time stays in the evidence');
     assert.strictEqual(p.url, `https://openvibe.watch/watches/${w.id}`);
     assert.strictEqual(p.rich_content.check_run_id, out.run.id);
     // The alert carries its evidence: before and after, the source and when it was fetched.

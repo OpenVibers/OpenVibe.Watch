@@ -88,6 +88,15 @@ const REFUSED_URL = new Set(['bad_url', 'port_refused', 'address_refused']);
 
 const clip = (s, n) => { const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
+/** "Nov 3, 05:01 UTC": when a value was fetched, as the alert's words say it (rich_content keeps the exact ISO time). */
+function readableTime(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+    const hh = String(d.getUTCHours()).padStart(2, '0'), mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${month} ${d.getUTCDate()}, ${hh}:${mm} UTC`;
+}
+
 /**
  * A value as a person reads it in one line. A feed entry or any record with a title or name reads as that title and
  * a short summary ("(Senior) Product Engineer — Bielefeld · Remote"), never as its JSON; a list says how many and
@@ -128,7 +137,7 @@ function notificationFor({ config, watch, run, action, value, previousValue, obs
     const evidence = evidenceFor({ watch, value, previousValue, observedAt });
     const facts = [before !== null && before !== now ? `${now} (was ${before})` : now];
     if (evidence.source_url) facts.push(`from ${evidence.source_url}`);
-    if (evidence.fetched_at) facts.push(`fetched ${evidence.fetched_at}`);
+    if (evidence.fetched_at) facts.push(`fetched ${readableTime(evidence.fetched_at)}`);
     return {
         type: 'WATCH_TRIGGERED',
         service: 'watch',
