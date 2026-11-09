@@ -40,7 +40,7 @@ t('the source is checked when it is saved', async () => {
     const bad = async (source, re) => {
         await assert.rejects(create(source), (e) => re.test(e.message));
     };
-    await bad({ kind: 'node', node_id: 'nod_01J0000000000000000000000', probe: { target: 'http://192.168.1.20/' } }, /node_id/);
+    await bad({ kind: 'node', node_id: 'lnk_01J0000000000000000000000', probe: { target: 'http://192.168.1.20/' } }, /node_id/);
     await bad({ kind: 'node', node_id: MACHINE, probe: { target: 'ftp://192.168.1.20/' } }, /target/);
     await bad({ kind: 'node', node_id: MACHINE, probe: { target: 'http://192.168.1.20/', method: 'POST' } }, /method is not known/);
     await bad({ kind: 'node', node_id: MACHINE, probe: { target: 'tcp://192.168.1.20:22', timeout_s: 99 } }, /timeout_s/);
