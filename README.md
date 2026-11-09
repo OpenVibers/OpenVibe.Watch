@@ -4,6 +4,9 @@
 > watch, get told when it changes or fires — cheaply, because a Watch never polls when an event or
 > the site's own ETag will do.
 
+**Live site:** https://openvibe.watch · **API docs:** https://openvibe.services · **For AI:** https://openvibe.watch/llms.txt
+**Run it:** `npm ci && npm run dev` (Node 22 or newer) · **Tests:** `npm test`
+
 **Status:** alpha (plan T18). The registry, the check engine, the pull carriers (`http`, `feed`, `api`), the push
 sources (OpenVibe events and signed webhooks), Link probes from the owner's own machine, the actions (a notification,
 an event, a webhook, an Actor task or agent run, a Run job, a Codes task) and the public site (sign-in, seven starting
