@@ -133,7 +133,8 @@ t('a check that does not fire queues nothing; one that fires queues each action 
     assert.strictEqual(p.subjectId, person.sub);
     assert.deepStrictEqual([p.type, p.service, p.category, p.priority], ['WATCH_TRIGGERED', 'watch', 'service', 'high']);
     assert.strictEqual(p.title, '“Widget price” fired');
-    assert.match(p.message, /^7\.50 \(was 19\.99\) · from http:\/\/127\.0\.0\.1:\d+\/price · fetched \d{4}-\d{2}-\d{2}T/);
+    assert.match(p.message, /^7\.50 \(was 19\.99\) · from http:\/\/127\.0\.0\.1:\d+\/price · fetched [A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} UTC$/, 'a time a person reads');
+    assert.match(p.rich_content.evidence.fetched_at, /^\d{4}-\d{2}-\d{2}T/, 'the exact time stays in the evidence');
     assert.strictEqual(p.url, `https://openvibe.watch/watches/${w.id}`);
     assert.strictEqual(p.rich_content.check_run_id, out.run.id);
     // The alert carries its evidence: before and after, the source and when it was fetched.
@@ -511,6 +512,21 @@ t('an alert leaves out the source and fetched lines when the watch stored neithe
     });
     assert.strictEqual(p.message, 'v1', 'no invented URL or time');
     assert.deepStrictEqual(p.rich_content.evidence, { before: null, after: 'v1', source_url: null, fetched_at: null });
+});
+
+t('a feed entry or a named record reads as its title and summary, never as JSON', () => {
+    const { notificationFor } = require('../server/actions');
+    const at = (value, previousValue) => notificationFor({
+        config: { baseUrl: 'https://openvibe.watch' },
+        watch: { id: 'wch_01JAB2C3D4E5F6G7H8J9K0MNPQ', name: 'Jobs', source: { kind: 'event', pattern: 'work.job.posted' } },
+        run: { id: 'ckr_01JAB2C3D4E5F6G7H8J9K0MNPQ' }, action: {}, value, previousValue, observedAt: null,
+    }).message;
+    const entry = { identity: 'https://openvibe.work/jobs/job_1', kind: 'entry', title: '(Senior) Product Engineer at sustaind GmbH', link: 'https://openvibe.work/jobs/job_1', summary: 'Bielefeld · Remote' };
+    assert.strictEqual(at(entry), '(Senior) Product Engineer at sustaind GmbH — Bielefeld · Remote');
+    assert.strictEqual(at({ name: 'Front door', state: 'open' }), 'Front door');
+    assert.strictEqual(at([entry, entry]), '2 items, first: (Senior) Product Engineer at sustaind GmbH');
+    assert.strictEqual(at({ price: 12 }), '{"price":12}', 'a shape with no name stays as it is');
+    assert.strictEqual(at({ title: 'B' }, { title: 'A' }), 'B (was A)');
 });
 
 t('done', async () => { await web.close(); await svc.stop(); });
