@@ -30,7 +30,6 @@
 .sc-steps { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
 .sc-code { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 520px) { .sc-code pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
-@media (prefers-reduced-motion: reduce) { .hm-card { transition: none; } }
 
 /* Phones (2026-10-29): a taste and a door. The kinds, the channels and each ready-made group are one sideways row
    (every card is still there); how it checks and the code fold under their headings; the questions are closed. */
