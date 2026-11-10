@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use OpenVibe.Watch in research or a product, cite it as below."
+title: openvibe-watch
+type: software
+authors:
+  - name: OpenVibe
+    alias: OpenVibers
+    website: https://openvibe.network
+repository-code: https://github.com/OpenVibers/OpenVibe.Watch
+url: https://openvibe.watch
+license: AGPL-3.0-only
+abstract: "Web monitoring over pages, feeds, APIs and devices that can wake Actor, Codes or Run, at openvibe.watch."
+keywords:
+  - openvibe
+  - alerts
+  - automation
+  - monitoring
+  - rss
