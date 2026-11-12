@@ -63,7 +63,8 @@ t('channels, live first, each with a "go live" watch filled in for it', async ()
 
 t('ready-made watches: a Host plan\'s price, feeds, and a blog\'s new posts', async () => {
     const home = await svc.get('/', { headers: { accept: 'text/html' } });
-    const ready = (/<section class="sc-sec" aria-labelledby="h-ready">[\s\S]*?<\/section>/.exec(home.text) || [''])[0];
+    // The block runs to the next page section: its panes are sections of their own (Shared 4.228.0's pick()).
+    const ready = (/<section class="sc-sec" aria-labelledby="h-ready">[\s\S]*?(?=<section class="sc-sec"|<footer|$)/.exec(home.text) || [''])[0];
     assert.match(ready, /template=json&amp;url=https%3A%2F%2Fopenvibe\.host%2Fapi%2Fv1%2Fcatalog%2Fplans%2Fhpl_01M4Z4ZZ6B8FC1ZEV0KAQ9XFBP&amp;value_path=plan\.price_monthly&amp;op=changed/);
     assert.match(ready, /template=feed&amp;url=https%3A%2F%2Fnodejs\.org%2Fen%2Ffeed%2Freleases\.xml/);
     assert.strictEqual((ready.match(/New posts on @openvibe/g) || []).length, 1, 'one card per blog, with its latest post');

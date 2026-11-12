@@ -31,12 +31,12 @@ t('the ready-made watches are chips: one per group, the first picked, every grou
     const page = home.text;
     assert.ok(page.includes('<div class="pick" id="pick-ready">'), 'the ready-made watches are a pick block');
     const block = page.slice(page.indexOf('<div class="pick" id="pick-ready">'));
-    const chips = [...block.matchAll(/<a class="pick-chip" href="#(?:pp-ready-)?([a-z]+)">()([^<]+)<\/a>/g)];
+    const chips = [...block.matchAll(/<label for="ovp-[a-z0-9]+-(?:pp-ready-)?([a-z]+)">()([^<]+)(?: <span class="ov-parts-n">[^<]*<\/span>)?<\/label>/g)];
     assert.deepStrictEqual(chips.map((m) => m[1]), ['prices', 'feeds', 'blogs'], 'a chip per group');
-    assert.ok(!/type="radio"/.test(block), 'no chip is a radio: nothing is picked, every pane shows');
-    // Every group stays in the page, with the id its chip picks.
+    assert.ok(/<input type=\"radio\" class=\"ov-parts-r\"[^>]* checked>/.test(block), 'the first part is open on a phone (Shared pick(): tabs, 11-12)');
+    // Every group stays in the page, with the id its tab opens.
     const panes = [...block.matchAll(/<div class="pick-pane" id="([a-z]+)">/g)].map((m) => m[1]);
-    assert.deepStrictEqual(panes, ['prices', 'feeds', 'blogs'], 'every group is in the page, one per chip');
+    assert.deepStrictEqual(panes, ['prices', 'feeds', 'blogs'], 'every group is in the page, one per tab');
     // Nothing was removed: the groups and their links are still there.
     for (const title of ['Hosting prices', 'Feeds', 'Blogs on OpenVibe', 'Watch this feed', 'Ready-made watches']) {
         assert.ok(page.includes(title), `${title} is on the page`);
