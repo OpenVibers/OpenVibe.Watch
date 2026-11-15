@@ -40,7 +40,7 @@ function foldMeta(body, cls = '') {
     const s = typeof body === 'string' ? body : String((body && (body.s || body.html || body.value)) || body || '');
     const n = (re) => (s.match(re) || []).length;
     const shipped = /data-ov-shipped="list"[^>]*?data-limit="(\d+)"|data-limit="(\d+)"[^>]*?data-ov-shipped="list"/.exec(s);
-    const q = n(/<details[\s>]/g), li = n(/<li[\s>]/g), a = n(/<a\s/g);
+    const q = n(/<details(?![^>]*\bsc-fold\b)[\s>]/g), li = n(/<li[\s>]/g), a = n(/<a\s/g);
     const text = shipped ? `latest ${shipped[1] || shipped[2]}` : q > 1 ? `${q} questions` : li > 1 ? `${li} items` : a > 1 ? `${a} links` : '';
     return text ? `<span${cls ? ` class="${cls}"` : ''}>${text}</span>` : '';
 }

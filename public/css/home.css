@@ -86,13 +86,13 @@
 .hm-fold-block > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; cursor: pointer; list-style: none; }
 .hm-fold-block > summary::-webkit-details-marker { display: none; }
 .hm-fold-block > summary h2 { margin: 0; font: 700 clamp(19px, 2.2vw, 26px)/1.2 var(--ov-font, 'Inter', system-ui, sans-serif); }
-.hm-fold-block > summary span { color: var(--text-muted, #7386a3); font-weight: 600; font-size: .86rem; white-space: nowrap; }
+.hm-fold-block > summary > span { color: var(--text-muted, #7386a3); font-weight: 600; font-size: .86rem; white-space: nowrap; }
 .hm-fold-block > summary:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 2px; }
 @media (min-width: 641px) {
   .hm-fold-block { border: 0; background: none; border-radius: 0; margin: 56px auto 0; padding: 0; }
   .hm-fold-block > summary { display: block; min-height: 0; }
   .hm-fold-block > summary h2 { margin: 0 0 6px; font: 700 clamp(22px, 2.6vw, 30px)/1.2 var(--ov-font, 'Inter', system-ui, sans-serif); }
-  .hm-fold-block > summary span { display: none; }
+  .hm-fold-block > summary > span { display: none; }
   .hm-fold-block .hm-sec, .hm-fold-block .sc-sec { margin: 0; max-width: none; padding: 0; }
 }
 @media (max-width: 640px) { .hm-fold-block { margin-top: 24px; } .hm-fold-block > summary h2 { font-size: 1.05rem; } }
