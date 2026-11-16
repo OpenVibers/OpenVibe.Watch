@@ -1,24 +1,12 @@
 'use strict';
 /** Escaping and small building blocks for server-rendered pages. Everything dynamic goes through esc(). */
 
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// The shared core (escaping, the html`` template) is openvibe-sdk/html's, the one implementation every site uses
+// (the consolidation of 2026-11-16); the rest of this file is this site's own.
+const { esc, Raw, raw, html, render, code } = require('openvibe-sdk/html');
 
 /** Tagged template: interpolations are escaped unless wrapped in raw(). Arrays are joined. */
-class Raw { constructor(s) { this.s = String(s); } toString() { return this.s; } }
-const raw = (s) => new Raw(s);
-function html(strings, ...values) {
-    let out = strings[0];
-    values.forEach((v, i) => { out += render(v) + strings[i + 1]; });
-    return raw(out);
-}
-function render(v) {
-    if (v == null || v === false) return '';
-    if (v instanceof Raw) return v.s;
-    if (Array.isArray(v)) return v.map(render).join('');
-    return esc(v);
-}
 
-const code = (s) => html`<code>${s}</code>`;
 const time = (iso) => (iso ? html`<time datetime="${iso}">${String(iso).replace('T', ' ').replace(/\.\d+Z$/, ' UTC').replace(/Z$/, ' UTC')}</time>` : '—');
 
 /** A <table> from headers and rows of cells (cells are already html or plain values). Each cell names its column
