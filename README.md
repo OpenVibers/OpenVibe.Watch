@@ -657,3 +657,9 @@ POSTs have their own per-address limit zones (nginx refuses `limit_req` inside `
 `/etc/openvibe/watch.env` (0600) from `.env.example`, run
 `sudo /opt/openvibe.host/roles/data/add-service.sh watch`, then
 `sudo ovhost deploy watch`.
+
+<!-- versions:start -->
+- openvibe-contracts: v0.443.0
+- openvibe-sdk: v0.177.0
+- openvibe-shared: v4.288.0
+<!-- versions:end -->
