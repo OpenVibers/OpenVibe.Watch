@@ -31,7 +31,7 @@ const { envelope } = require('./events/envelope');
 const { emitAgentStep } = require('./events/agent-step');
 
 /** Source kinds that reach out on a cadence; event and webhook sources are pushed to instead. */
-const POLLING = new Set(['http', 'feed', 'api', 'node', 'run']);
+const POLLING = new Set(['http', 'feed', 'api', 'node', 'run', 'usage']);
 const PUSHED = new Set(['event', 'webhook']);
 const RUN_STATES = ['ok', 'not_modified', 'no_change', 'changed', 'condition_met', 'http_error', 'timeout', 'parse_error', 'rate_limited', 'budget_exceeded', 'skipped', 'disabled'];
 const STATUSES = ['active', 'paused', 'disabled', 'failed'];
@@ -184,6 +184,11 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
             + (Array.isArray(rec.action) ? rec.action.filter((a) => a && a.kind === 'webhook' && a.secret_ref).length : 0);
         if (refs && !rec.project_id) throw new RegistryError('a project secret (secret_ref) lives in a project: set project_id to a project you are an admin or owner of', 'watch.project_required');
     }
+    /** A usage source reads a person's own AI plan windows (carriers/usage.js): only a person's watch has one. */
+    function checkUsage(owner, rec) {
+        const src = rec && rec.source ? (typeof rec.source === 'string' ? JSON.parse(rec.source) : rec.source) : null;
+        if (src && src.kind === 'usage' && !PERSON.test(String(owner || ''))) throw new RegistryError('a usage source reads your own AI plan windows: the watch must belong to a person');
+    }
     function checkActorAgents(owner, rec) {
         if (!PERSON.test(String(owner || '')) && Array.isArray(rec.action) && rec.action.some((a) => a && a.kind === 'actor-agent')) {
             throw new RegistryError('watch.action_no_person: an Actor agent runs for a person, and this watch belongs to an agent or a service');
@@ -334,6 +339,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         if (!owner) throw new RegistryError('no acting subject', 'watch.invalid');
         checkSecrets(owner, req);
         checkProjectSecrets(req);
+        checkUsage(owner, req);
         checkActorAgents(owner, req);
         await checkProject(owner, req, true);
         // A per-owner cap, so one caller cannot fill the registry (the API and the form both come
@@ -414,6 +420,7 @@ function createRegistry({ db, now = () => Date.now(), ids = contractIds, outbox 
         validateRequest(merged);
         checkSecrets(row.owner_sub, merged);
         checkProjectSecrets(merged);
+        checkUsage(row.owner_sub, merged);
         checkActorAgents(row.owner_sub, merged);
         await checkProject(row.owner_sub, merged, changes.project_id !== undefined && changes.project_id !== row.project_id);
         // The project environment follows the project: production when a project is first named, gone with it.

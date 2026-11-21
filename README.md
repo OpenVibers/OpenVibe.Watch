@@ -166,6 +166,13 @@ A kind whose carrier does not exist yet is **accepted by the registry but never 
 check is recorded `skipped` with `watch.carrier_unavailable` and the reason names the step. That is
 what keeps a half-built rung from silently turning into polling.
 
+**AI plan usage** (plan AD.37, contracts 0.450.0, [server/carriers/usage.js](server/carriers/usage.js)): `{ kind: 'usage', agent?, window?: '5h' | 'week' | 'any' }`.
+The owner's coding agents' plan windows as OpenVibe.Codes reads them from their machines (Watch asks Codes as itself for
+the owner, Network grant `codes.task.read`). The check states `{ windows: [...], agent, window, used_pct, left_pct,
+resets_at, hours_to_reset }` with the window that resets soonest with room left at the top, so "my week resets within
+12 hours with 15% left" is `extraction: { kind: 'json', value_path: 'left_pct' }`, `condition: { op: 'gte', value: 15 }`
+plus a second watch or a jsonpath on `hours_to_reset`. A person's watch only.
+
 ## Event sources
 
 A watch whose source is `{ "kind": "event", "pattern": "host.release.published", "filter": { "repo": "OpenVibe.Bot" } }`
@@ -659,7 +666,7 @@ POSTs have their own per-address limit zones (nginx refuses `limit_req` inside `
 `sudo ovhost deploy watch`.
 
 <!-- versions:start -->
-- openvibe-contracts: v0.449.0
+- openvibe-contracts: v0.450.0
 - openvibe-sdk: v0.188.0
 - openvibe-shared: v4.332.0
 <!-- versions:end -->
