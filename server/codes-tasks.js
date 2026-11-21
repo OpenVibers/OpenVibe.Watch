@@ -23,7 +23,17 @@ function createCodesTasks(client, { baseUrl }) {
         const t = (out && out.task) || {};
         return { id: t.id || null, state: t.state || null, url: t.url || null, created: !!(out && out.created) };
     }
-    return { start };
+    /**
+     * The owner's AI plan usage (plan AD.37; Codes GET /api/v1/me/usage, codes.task.read): each coding agent's windows
+     * as their machines report them. → { agents: [{ agent, windows: [{ name, pct|used/limit, resets_at }] }] }
+     */
+    async function usage(subjectId) {
+        return client.json({
+            service: 'codes', baseUrl, audience: 'openvibe.codes', method: 'GET', path: '/api/v1/me/usage',
+            headers: { 'X-OV-Subject': subjectId }, retries: 1,
+        });
+    }
+    return { start, usage };
 }
 
 module.exports = { createCodesTasks };

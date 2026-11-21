@@ -84,7 +84,9 @@ async function start({ config, env = process.env, db: givenDb = null, now = () =
     const machines = givenMachines || (client ? createMachines(client, { baseUrl: config.actions.botUrl }) : null);
     // Project secrets (ADR-056): a source credential or a webhook signature by secret_ref, through Network.
     const projectSecrets = givenProjectSecrets || (client ? require('./project-secrets').createProjectSecrets(client, { networkUrl: config.networkInternalUrl }) : null);
-    const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log, machines, projectSecrets });
+    // The usage source reads the owner's plan windows from OpenVibe.Codes with Watch's own token (carriers/usage.js).
+    const codesForUsage = givenCodes || (client ? createCodesTasks(client, { baseUrl: config.actions.codesUrl }) : null);
+    const carriers = createCarriers({ fetcher: spacedFetcher(fetcher, spacer), config, log, machines, projectSecrets, codes: codesForUsage });
     const notifications = client ? createNotificationsClient(client) : null;
     const actorTasks = client ? createActorTasks(client, { baseUrl: config.actions.actorUrl }) : null;
     // Webhook actions leave through the same guard as every fetch (server/net/post.js).

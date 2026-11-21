@@ -28,9 +28,10 @@ const { createApiCarrier } = require('./api');
 const { createEventCarrier } = require('./event');
 const { createWebhookCarrier } = require('./webhook');
 const { createNodeCarrier } = require('./node');
+const { createUsageCarrier } = require('./usage');
 
 /** The documented order. A source kind fixes its carrier; this is the order a watch would prefer. */
-const PREFERENCE = ['event', 'webhook', 'http', 'feed', 'api', 'node'];
+const PREFERENCE = ['event', 'webhook', 'http', 'feed', 'api', 'node', 'usage'];
 
 /** The step of plan T18 that carries each kind this release does not. */
 const LATER = {
@@ -48,7 +49,7 @@ function unavailable(kind) {
     };
 }
 
-function createCarriers({ fetcher, config, log = console, machines = null, projectSecrets = null }) {
+function createCarriers({ fetcher, config, log = console, machines = null, projectSecrets = null, codes = null }) {
     const carriers = {
         http: createHttpCarrier({ fetcher, config, log, projectSecrets }),
         feed: createFeedCarrier({ fetcher, config, log, projectSecrets }),
@@ -56,6 +57,8 @@ function createCarriers({ fetcher, config, log = console, machines = null, proje
         event: createEventCarrier(),
         webhook: createWebhookCarrier(),
         node: createNodeCarrier({ machines }),
+        // The owner's AI plan windows through OpenVibe.Codes (plan AD.37, carriers/usage.js).
+        usage: createUsageCarrier({ codes }),
     };
 
     /**
