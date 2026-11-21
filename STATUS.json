@@ -7,7 +7,7 @@
   "runtime": "node 22, express, PostgreSQL 18 (openvibe-sdk/db, async) + Valkey 9, fast-xml-parser",
   "port": 4730,
   "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
-  "contracts": "openvibe-contracts v0.450.0 (the usage source; watch.rate.* events; actor-agent requires v0.143.0)",
+  "contracts": "openvibe-contracts v0.452.0 (the usage source, its reset window and check runs; watch.rate.* events; actor-agent requires v0.143.0)",
   "sdk": "openvibe-sdk v0.188.0",
   "shared": "openvibe-shared v4.332.0",
   "capabilities": [

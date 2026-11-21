@@ -88,6 +88,17 @@ const TEMPLATES = {
         defaultOp: 'changed',
         extraction: 'json',
     },
+    usage: {
+        card: 'Your AI plan has room before it resets',
+        cardBlurb: 'Claude Code, Codex and the other coding agents on your computers: Watch tells you when a plan window resets soon with usage still left, so you can use it before it is gone.',
+        title: 'Watch your AI plan usage',
+        kind: 'usage',
+        kindWords: 'your AI plan usage',
+        ops: ['gte'],
+        defaultOp: 'gte',
+        extraction: 'json',
+        valuePath: 'left_pct',
+    },
     lan: {
         card: 'Something on your network goes down',
         cardBlurb: 'A NAS, a printer, a camera or a game server at home: your own computer checks that its port answers, and Watch tells you when it stops. Nothing on your network is opened to the internet.',
@@ -100,8 +111,13 @@ const TEMPLATES = {
     },
 };
 const TEMPLATE_NAMES = Object.keys(TEMPLATES);
+// The coding agents a usage watch can name (Codes' fleet ids); blank is any of them.
+const USAGE_AGENTS = [
+    { value: '', label: 'Any of them' }, { value: 'claude-code', label: 'Claude Code' }, { value: 'codex', label: 'Codex' },
+    { value: 'opencode', label: 'OpenCode' }, { value: 'command-code', label: 'Command Code' }, { value: 'minimax-code', label: 'MiniMax Code' },
+];
 /** The templates whose source is polled: the site can run one quiet test check before arming these. */
-const POLLING_TEMPLATES = new Set(['page', 'price', 'feed', 'json', 'lan']);
+const POLLING_TEMPLATES = new Set(['page', 'price', 'feed', 'json', 'lan', 'usage']);
 const CREATE_SUBMIT = (template) => (POLLING_TEMPLATES.has(template) ? 'Create and test this watch' : 'Create this watch');
 // The public events the event template offers (Contracts: each is `public`, so any watch may read it): which payload
 // field narrows it, and which field is new on every occurrence (so `changed` fires once per occurrence).
@@ -198,6 +214,7 @@ function createPageRoutes(ctx) {
         if (kind === 'webhook') return 'webhook';
         if (kind === 'event') return 'event';
         if (kind === 'node') return 'lan';
+        if (kind === 'usage') return 'usage';
         if (kind === 'feed') return 'feed';
         if (kind === 'api') return 'json';
         const e = watch.extraction || {};
@@ -230,6 +247,9 @@ function createPageRoutes(ctx) {
             codes_brief: (codesAction(watch.action) || {}).brief || '',
             event: (watch.source && watch.source.kind === 'event' && watch.source.pattern) || EVENT_CHOICES[0].value,
             machine: (watch.source && watch.source.kind === 'node' && watch.source.node_id) || '',
+            usage_agent: (watch.source && watch.source.kind === 'usage' && watch.source.agent) || '',
+            usage_window: (watch.source && watch.source.kind === 'usage' && watch.source.window) || 'week',
+            usage_within: (watch.source && watch.source.kind === 'usage' && Number.isInteger(watch.source.reset_within_hours)) ? String(watch.source.reset_within_hours) : '12',
             lan_address: (watch.source && watch.source.kind === 'node' && watch.source.probe && String(watch.source.probe.target || '').replace(/^tcp:\/\//, '')) || '',
             event_filter: (() => {
                 const c = eventChoice(watch.source && watch.source.pattern);
@@ -310,6 +330,29 @@ function createPageRoutes(ctx) {
                 cadence: null,
                 extraction: { kind: 'json', value_path: ev.valuePath },
                 condition: { op: 'changed' },
+                action,
+            };
+            if (name) body.name = name;
+            return { body };
+        }
+        // Your AI plan usage (carriers/usage.js, Contracts 0.451.0): a window that resets within N hours with X% left.
+        if (template === 'usage') {
+            const name = String(fields.name == null ? '' : fields.name).trim();
+            if (name.length > 120) errors.name = 'A name can be at most 120 characters.';
+            const agent = String(fields.usage_agent || '').trim();
+            if (agent && !USAGE_AGENTS.some((a) => a.value === agent)) errors.usage_agent = 'Choose one of the coding agents, or any.';
+            const win = String(fields.usage_window || 'week');
+            if (!['5h', 'week', 'any'].includes(win)) errors.usage_window = 'Choose the 5-hour window, the week, or either.';
+            const within = INT(fields.usage_within, 12);
+            if (!(within >= 1 && within <= 168)) errors.usage_within = 'Between 1 and 168 hours.';
+            const left = Number(String(fields.value == null || fields.value === '' ? '15' : fields.value).trim());
+            if (!Number.isFinite(left) || left < 1 || left > 100) errors.value = 'A percentage from 1 to 100.';
+            if (Object.keys(errors).length) return { errors };
+            const body = {
+                source: { kind: 'usage', ...(agent ? { agent } : {}), window: win, reset_within_hours: within },
+                cadence: { every_sec: 3600, jitter_sec: 60 },
+                extraction: { kind: 'json', value_path: 'left_pct' },
+                condition: { op: 'gte', value: left },
                 action,
             };
             if (name) body.name = name;
@@ -453,7 +496,13 @@ ${error ? html`<span class="field-error" role="alert">${error}</span>` : ''}
             : html`<input type="hidden" name="op" value="${t.ops[0]}"><span class="fixed">fires when it ${OPS[t.ops[0]]}</span>`;
 
         const needsValue = t.ops.some((op) => NEEDS_VALUE.has(op));
-        const conditionBlock = template === 'lan'
+        const conditionBlock = template === 'usage'
+            ? html`<fieldset><legend>When should it fire?</legend>
+${field('Resets within (hours)', html`<input type="number" id="${idOf('usage_within')}" name="usage_within" value="${fields.usage_within || '12'}" min="1" max="168" inputmode="numeric">`, { name: 'usage_within', error: errors.usage_within, hint: 'Only a window that resets this soon counts.' })}
+${field('With at least (% left)', html`<input type="number" id="${idOf('value')}" name="value" value="${fields.value || '15'}" min="1" max="100" inputmode="numeric">`, { name: 'value', error: errors.value, hint: 'It fires once when that much of the window is still unused, read every hour from your computers.' })}
+<input type="hidden" name="op" value="gte">
+</fieldset>`
+            : template === 'lan'
             ? html`<fieldset><legend>When should it fire?</legend>
 <p class="muted small">When the address stops accepting connections, seen from your machine. It fires once each time it goes down.</p>
 </fieldset>`
@@ -464,7 +513,7 @@ ${(template === 'price' || template === 'json') ? field('Hold for (seconds)', ht
 </fieldset>`;
 
         let extractionBlock;
-        if (template === 'event' || template === 'lan') {
+        if (template === 'event' || template === 'lan' || template === 'usage') {
             extractionBlock = '';
         } else if (template === 'webhook') {
             extractionBlock = html`<fieldset><legend>What should it read?</legend>
@@ -491,7 +540,13 @@ ${field('Value path', html`<input type="text" id="${idOf('value_path')}" name="v
 
         const pushed = template === 'webhook' || template === 'event';
         const chosen = eventChoice(fields.event) || EVENT_CHOICES[0];
-        const whatBlock = template === 'lan'
+        const whatBlock = template === 'usage'
+            ? html`<fieldset><legend>What to watch</legend>
+${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. Use my Claude week">`, { name: 'name', error: errors.name, hint: 'Optional.' })}
+${field('Coding agent', select('usage_agent', USAGE_AGENTS, fields.usage_agent || ''), { name: 'usage_agent', error: errors.usage_agent, hint: 'As your computers report it to OpenVibe.Codes (OpenVibe Link reads it every few minutes).' })}
+${field('Window', select('usage_window', [{ value: 'week', label: 'The weekly window' }, { value: '5h', label: 'The 5-hour window' }, { value: 'any', label: 'Either' }], fields.usage_window || 'week'), { name: 'usage_window', error: errors.usage_window })}
+</fieldset>`
+            : template === 'lan'
             ? html`<fieldset><legend>What to watch</legend>
 ${field('Name', html`<input type="text" id="${idOf('name')}" name="name" value="${fields.name}" maxlength="120" placeholder="e.g. The NAS">`, { name: 'name', error: errors.name, hint: 'Optional. Without one, Watch names it after the address.' })}
 ${field('Your machine', html`<input type="text" id="${idOf('machine')}" name="machine" value="${fields.machine}" maxlength="30" placeholder="dev_…" required>`, { name: 'machine', error: errors.machine, hint: html`A computer on that network with OpenVibe Link and its computer plugin: copy its id from <a href="https://openvibe.link/machines">openvibe.link/machines</a>, where you also turn on “Let my watches check things from this computer”.` })}

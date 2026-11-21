@@ -105,6 +105,7 @@ function subjectWords(watch) {
     if (source.kind === 'event') {
         return path ? html`the value at <code>${path}</code> of a <b>${source.pattern}</b> event` : html`a <b>${source.pattern}</b> event`;
     }
+    if (source.kind === 'usage') return html`what is left of your <b>AI plan</b>, read from your computers`;
     return html`${extractionWords(watch.extraction)} on <b>${host(source.url)}</b>`;
 }
 
@@ -115,6 +116,15 @@ function subjectWords(watch) {
 function conditionSentence(watch) {
     const source = watch.source || {};
     const c = watch.condition || {};
+    // Your AI plan usage (carriers/usage.js): "your Claude Code's weekly window resets within 12 hours with at least 15% left".
+    if (source.kind === 'usage') {
+        const AGENT = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode', 'command-code': 'Command Code', 'minimax-code': 'MiniMax Code' };
+        const who = source.agent ? `your ${AGENT[source.agent] || source.agent}’s` : 'one of your coding agents’';
+        const win = source.window === '5h' ? '5-hour window' : source.window === 'week' ? 'weekly window' : 'plan window';
+        const within = Number.isInteger(source.reset_within_hours) ? ` resets within ${source.reset_within_hours} hour${source.reset_within_hours === 1 ? '' : 's'}` : ' resets';
+        const left = c.op === 'gte' && c.value != null ? ` with at least ${c.value}% left` : '';
+        return html`${who} <b>${win}</b>${within}${left}`;
+    }
     if (source.kind === 'node' && /^tcp:/.test((source.probe && source.probe.target) || '') && c.op === 'eq' && c.value === 'down') {
         return html`<b>${host(source.probe.target)}</b> stops answering, seen from your computer`;
     }
