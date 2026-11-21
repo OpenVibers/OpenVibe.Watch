@@ -272,6 +272,27 @@ t('the event template: a channel going live (or a blog post) wakes the watch, wi
     assert.strictEqual(bad.status, 422, 'only the offered public events');
 });
 
+t('the AI plan template: a coding agent\'s window resets soon with room left (plan AD.37)', async () => {
+    const owner = svc.network.addUser('usage-owner');
+    const own = await svc.signIn(owner);
+    const create = (fields) => svc.get('/watches/new', { cookie: own, form: fields });
+    const ME = userToken(owner.subject);
+    const form = await svc.get('/watches/new?template=usage', { cookie: own });
+    assert.strictEqual(form.status, 200);
+    assert.match(form.text, /name="usage_agent"/);
+    assert.match(form.text, /name="usage_within"/);
+    const made = await create({ template: 'usage', name: 'Use my Claude week', usage_agent: 'claude-code', usage_window: 'week', usage_within: '12', value: '15', notify: 'on' });
+    assert.strictEqual(made.status, 303, made.text);
+    const w = (await request(svc.base, 'GET', `/api/v1/watches/${indexOf(made)}`, { token: ME })).body.watch;
+    assert.deepStrictEqual(w.source, { kind: 'usage', agent: 'claude-code', window: 'week', reset_within_hours: 12 });
+    assert.deepStrictEqual([w.extraction, w.condition], [{ kind: 'json', value_path: 'left_pct' }, { op: 'gte', value: 15 }]);
+    const page = await svc.get(`/watches/${indexOf(made)}`, { cookie: own });
+    assert.match(page.text, /your Claude Code’s <b>weekly window<\/b> resets within 12 hours with at least 15% left/);
+    const bad = await create({ template: 'usage', usage_within: '900', value: '0' });
+    assert.strictEqual(bad.status, 422);
+    assert.match(bad.text, /Between 1 and 168 hours/);
+});
+
 t('the network template: a device at home stops answering, checked from the person\'s own machine', async () => {
     // A second person, so this test's writes do not count against the first one's budget of 30 a minute.
     const owner = svc.network.addUser('lan-owner');

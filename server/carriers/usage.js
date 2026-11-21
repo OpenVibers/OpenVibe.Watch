@@ -4,7 +4,7 @@
  * other platforms … if the weekly reset's coming up and there's still usage available … get every ounce of your
  * usage"): the owner's coding agents' plan windows, as OpenVibe.Codes reads them from their machines.
  *
- *   source: { kind: 'usage', agent?: 'claude-code' | 'codex' | …, window?: '5h' | 'week' | 'any' }
+ *   source: { kind: 'usage', agent?: 'claude-code' | 'codex' | …, window?: '5h' | 'week' | 'any', reset_within_hours?: 1–168 }
  *
  * The check states the document
  *   { windows: [{ agent, window, used_pct, left_pct, resets_at, hours_to_reset }],
@@ -47,8 +47,10 @@ function windowsOf(view, now) {
     return out;
 }
 
-function choose(windows, { agent = null, window = 'any' } = {}) {
-    const pool = windows.filter((w) => (!agent || w.agent === agent) && (!window || window === 'any' || w.window === window));
+function choose(windows, { agent = null, window = 'any', within = null } = {}) {
+    const pool = windows.filter((w) => (!agent || w.agent === agent) && (!window || window === 'any' || w.window === window)
+        // reset_within_hours (Contracts 0.451.0): only a window that resets that soon counts.
+        && (!within || (w.hours_to_reset != null && w.hours_to_reset <= within)));
     if (!pool.length) return null;
     const soon = (a, b) => (a.hours_to_reset ?? Infinity) - (b.hours_to_reset ?? Infinity) || b.left_pct - a.left_pct;
     const roomy = pool.filter((w) => w.left_pct > 0).sort(soon);
@@ -68,7 +70,7 @@ function createUsageCarrier({ codes, now = Date.now }) {
             }
             const windows = windowsOf(view, now());
             const src = watch && watch.source ? watch.source : {};
-            const pick = choose(windows, { agent: src.agent || null, window: src.window || 'any' });
+            const pick = choose(windows, { agent: src.agent || null, window: src.window || 'any', within: Number.isInteger(src.reset_within_hours) ? src.reset_within_hours : null });
             const document = { windows, agent: null, window: null, used_pct: null, left_pct: null, resets_at: null, hours_to_reset: null, ...(pick || {}) };
             if (!windows.length) document.note = 'no machine of yours has reported a plan window yet (OpenVibe Link reads them every few minutes)';
             const body = JSON.stringify(document);

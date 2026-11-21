@@ -35,6 +35,9 @@ t('windows are read flat, and the one that resets soonest with room left is chos
     assert.deepStrictEqual([choose(w, { window: 'week' }).agent, choose(w, { window: 'week' }).left_pct], ['claude-code', 30]);
     assert.deepStrictEqual([choose(w, { agent: 'codex', window: 'week' }).hours_to_reset], [120]);
     assert.strictEqual(choose(w, { agent: 'nobody' }), null);
+    // reset_within_hours (Contracts 0.451.0): only a window that resets that soon counts.
+    assert.deepStrictEqual([choose(w, { window: 'week', within: 12 }).agent, choose(w, { window: 'week', within: 12 }).hours_to_reset], ['claude-code', 9]);
+    assert.strictEqual(choose(w, { agent: 'codex', window: 'week', within: 12 }), null, 'Codex\'s week resets in 120 h: not yet');
     const passed = windowsOf({ agents: [{ agent: 'x', windows: [{ name: 'week', pct: 95, resets_at: new Date(NOW - H).toISOString() }] }] }, NOW);
     assert.strictEqual(passed[0].left_pct, 100, 'a window whose reset has passed is whole again');
 });
