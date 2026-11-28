@@ -9,7 +9,7 @@
   "domain": "openvibe.watch (a public server-rendered site + a loopback-only API; vhost in deploy/nginx; README \"Public site\" and \"Public host\")",
   "contracts": "openvibe-contracts v0.454.0 (the usage source, its reset window and check runs; watch.rate.* events; actor-agent requires v0.143.0)",
   "sdk": "openvibe-sdk v0.191.0",
-  "shared": "openvibe-shared v4.339.0",
+  "shared": "openvibe-shared v4.342.0",
   "capabilities": [
     "watch.watch.read",
     "watch.watch.manage",
