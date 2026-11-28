@@ -49,7 +49,7 @@ function unavailable(kind) {
     };
 }
 
-function createCarriers({ fetcher, config, log = console, machines = null, projectSecrets = null, codes = null }) {
+function createCarriers({ fetcher, config, log = console, machines = null, projectSecrets = null, codes = null, now = Date.now }) {
     const carriers = {
         http: createHttpCarrier({ fetcher, config, log, projectSecrets }),
         feed: createFeedCarrier({ fetcher, config, log, projectSecrets }),
@@ -58,7 +58,8 @@ function createCarriers({ fetcher, config, log = console, machines = null, proje
         webhook: createWebhookCarrier(),
         node: createNodeCarrier({ machines }),
         // The owner's AI plan windows through OpenVibe.Codes (plan AD.37, carriers/usage.js).
-        usage: createUsageCarrier({ codes }),
+        // On Watch's own clock (start({ now })), so a window's reset is read against the same time as everything else.
+        usage: createUsageCarrier({ codes, now }),
     };
 
     /**
